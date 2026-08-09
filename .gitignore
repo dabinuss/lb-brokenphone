@@ -1,0 +1,31 @@
+# Node.js / React
+node_modules/
+dev/web/node_modules/
+dev/web/dist/
+dist/
+build/
+.npm/
+
+# Agent / AI / IDE generated files (GPT, Gemini, Claude, etc.)
+.gemini/
+.agents/
+.cline/
+.cursor/
+.cursorrules
+.cascade/
+.windsurf/
+.aider*
+AGENTS.md
+GEMINI.md
+CLINE.md
+mcp_config.json
+hooks.json
+
+# Environment
+.env
+.env.local
+.env.*
+
+# OS generated
+.DS_Store
+Thumbs.db
