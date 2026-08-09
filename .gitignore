@@ -3,8 +3,8 @@ node_modules/
 dev/web/node_modules/
 dev/web/dist/
 dist/
-build/
 .npm/
+lbphone_search.txt
 
 # Agent / AI / IDE generated files (GPT, Gemini, Claude, etc.)
 .gemini/

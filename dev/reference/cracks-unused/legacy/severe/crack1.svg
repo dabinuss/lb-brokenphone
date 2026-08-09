@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 2000">
+  <g fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="510" cy="905" r="30" stroke-opacity=".86" stroke-width="6"/>
+    <circle cx="510" cy="905" r="62" stroke-opacity=".36" stroke-width="3" stroke-dasharray="18 12"/>
+    <path stroke-opacity=".8" stroke-width="6" d="M510 905L176 292M510 905l242-718M510 905l405-321M510 905l437 191M510 905l259 653M510 905l-137 871M510 905L84 1512M510 905L55 758"/>
+    <path stroke-opacity=".5" stroke-width="3" d="M350 611l-142-8-95-96M626 560l-112-96 25-154M760 706l53-135 103-82M783 1024l113-61M635 1221l-28 183 96 128M447 1307l-127 129 6 180M302 1171l-151-26-92 94M274 815l-115 82-119-31"/>
+    <path stroke-opacity=".28" stroke-width="2" d="M208 603l-54 112M514 464l-104-45M813 571l-83-69M896 963l18-114M607 1404l-105 30M320 1436l-98-61M151 1145l29-128M159 897l-63-87"/>
+  </g>
+</svg>
