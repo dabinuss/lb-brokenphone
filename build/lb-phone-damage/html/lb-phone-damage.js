@@ -1,3 +1,4 @@
+// Runs in lb-phone-damage's own NUI and renders into LB Phone's sibling frame.
 (function () {
     'use strict';
 
@@ -38,8 +39,36 @@
     let lastData = { damageLevel: 0, damageSeed: 0, state: 'closed' };
     let touchFaultActive = false;
     let renderToken = 0;
+    let targetWindow = null;
+    let targetDocument = null;
+    let observedDocument = null;
+    let targetObserver = null;
     const imageCache = new Map();
     const reportedLoadErrors = new Set();
+
+    function resolveLbPhoneTarget() {
+        try {
+            const rootDocument = window.parent.document;
+            const frames = Array.from(rootDocument.querySelectorAll('iframe'));
+            const lbFrame = frames.find(function (frame) {
+                return frame.name === 'lb-phone';
+            }) || frames.find(function (frame) {
+                return /(^|[-_/])lb-phone([/?#]|$)/i.test(frame.getAttribute('src') || frame.src || '');
+            });
+
+            if (lbFrame && lbFrame.contentWindow && lbFrame.contentDocument && lbFrame.contentDocument.body) {
+                targetWindow = lbFrame.contentWindow;
+                targetDocument = lbFrame.contentDocument;
+                return true;
+            }
+        } catch (error) {
+            // The retry loop below handles frames that are not ready yet.
+        }
+
+        targetWindow = null;
+        targetDocument = null;
+        return false;
+    }
 
     function random(seed) {
         let value = (Number(seed) || 1) | 0;
@@ -49,10 +78,10 @@
     }
 
     function ensureCrackFilter() {
-        if (document.getElementById(crackFilterId)) return;
+        if (targetDocument.getElementById(crackFilterId)) return;
 
         const namespace = 'http://www.w3.org/2000/svg';
-        const svg = document.createElementNS(namespace, 'svg');
+        const svg = targetDocument.createElementNS(namespace, 'svg');
         Object.assign(svg.style, {
             position: 'absolute',
             width: '0',
@@ -61,22 +90,22 @@
         });
         svg.setAttribute('aria-hidden', 'true');
 
-        const filter = document.createElementNS(namespace, 'filter');
+        const filter = targetDocument.createElementNS(namespace, 'filter');
         filter.id = crackFilterId;
         filter.setAttribute('color-interpolation-filters', 'sRGB');
 
-        const normalizeWhite = document.createElementNS(namespace, 'feComponentTransfer');
+        const normalizeWhite = targetDocument.createElementNS(namespace, 'feComponentTransfer');
         normalizeWhite.setAttribute('result', 'normalized-white');
-        const deepenCracks = document.createElementNS(namespace, 'feComponentTransfer');
+        const deepenCracks = targetDocument.createElementNS(namespace, 'feComponentTransfer');
         deepenCracks.setAttribute('in', 'normalized-white');
 
         for (const channel of ['R', 'G', 'B']) {
-            const normalize = document.createElementNS(namespace, `feFunc${channel}`);
+            const normalize = targetDocument.createElementNS(namespace, `feFunc${channel}`);
             normalize.setAttribute('type', 'linear');
             normalize.setAttribute('slope', '1.02');
             normalizeWhite.appendChild(normalize);
 
-            const deepen = document.createElementNS(namespace, `feFunc${channel}`);
+            const deepen = targetDocument.createElementNS(namespace, `feFunc${channel}`);
             deepen.setAttribute('type', 'gamma');
             deepen.setAttribute('amplitude', '1');
             deepen.setAttribute('exponent', '3');
@@ -87,7 +116,7 @@
         filter.appendChild(normalizeWhite);
         filter.appendChild(deepenCracks);
         svg.appendChild(filter);
-        document.documentElement.appendChild(svg);
+        targetDocument.documentElement.appendChild(svg);
     }
 
     function loadCrackImage(path) {
@@ -104,14 +133,15 @@
     }
 
     function ensureOverlay() {
-        const phone = document.querySelector('.phone-container');
+        if (!targetDocument && !resolveLbPhoneTarget()) return null;
+        const phone = targetDocument.querySelector('.phone-container');
         if (!phone) return null;
         ensureCrackFilter();
 
-        let overlay = document.getElementById('lb-phone-damage-overlay');
+        let overlay = targetDocument.getElementById('lb-phone-damage-overlay');
         if (overlay && overlay.parentElement !== phone) overlay.remove();
         if (!overlay || !overlay.isConnected) {
-            overlay = document.createElement('div');
+            overlay = targetDocument.createElement('div');
             overlay.id = 'lb-phone-damage-overlay';
             Object.assign(overlay.style, {
                 position: 'absolute',
@@ -137,7 +167,7 @@
         let canvas = overlay.querySelector('#lb-phone-damage-canvas');
         if (!canvas) {
             overlay.replaceChildren();
-            canvas = document.createElement('canvas');
+            canvas = targetDocument.createElement('canvas');
             canvas.id = 'lb-phone-damage-canvas';
             Object.assign(canvas.style, {
                 display: 'block',
@@ -172,7 +202,7 @@
 
         if (token !== renderToken || !canvas.isConnected) return;
         const overlay = canvas.parentElement;
-        const pixelRatio = Math.min(Number(window.devicePixelRatio) || 1, 2);
+        const pixelRatio = Math.min(Number(targetWindow && targetWindow.devicePixelRatio) || 1, 2);
         const width = Math.max(1, Math.round((overlay.clientWidth || 290) * pixelRatio));
         const height = Math.max(1, Math.round((overlay.clientHeight || 585) * pixelRatio));
         if (canvas.width !== width) canvas.width = width;
@@ -251,6 +281,24 @@
         render();
     });
 
-    new MutationObserver(render).observe(document.documentElement, { childList: true, subtree: true });
-    render();
+    fetch(`https://${GetParentResourceName()}/ready`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}'
+    }).catch(function () {});
+
+    function connectRenderer() {
+        if (!resolveLbPhoneTarget()) return;
+        if (observedDocument === targetDocument) return;
+
+        if (targetObserver) targetObserver.disconnect();
+        observedDocument = targetDocument;
+        targetObserver = new MutationObserver(render);
+        targetObserver.observe(targetDocument.documentElement, { childList: true, subtree: true });
+        console.log('[lb-phone-damage][external] connected to lb-phone DOM');
+        render();
+    }
+
+    connectRenderer();
+    window.setInterval(connectRenderer, 1000);
 })();

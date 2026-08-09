@@ -34,7 +34,7 @@ local function lbExport(name, ...)
 end
 
 local function sendNuiUpdate()
-    TriggerEvent('lb-phone-damage:lbui:update', {
+    SendNUIMessage({
         action = 'lb-phone-damage:update',
         state = state.visualState,
         damageLevel = state.damageLevel,
@@ -43,6 +43,11 @@ local function sendNuiUpdate()
         motion = Config.Motion
     })
 end
+
+RegisterNUICallback('ready', function(_, callback)
+    sendNuiUpdate()
+    callback({ ok = true })
+end)
 
 local function setVisualState(value)
     if state.visualState == value then return end
@@ -53,7 +58,7 @@ end
 local function stopTouchFaults()
     touchToken = touchToken + 1
     if touchFaultActive then
-        TriggerEvent('lb-phone-damage:lbui:update', {
+        SendNUIMessage({
             action = 'lb-phone-damage:touchFault',
             active = false
         })
@@ -80,13 +85,13 @@ local function startTouchFaults()
             if token ~= touchToken or not touchFaultsNeeded() then break end
 
             touchFaultActive = true
-            TriggerEvent('lb-phone-damage:lbui:update', {
+            SendNUIMessage({
                 action = 'lb-phone-damage:touchFault',
                 active = true
             })
             Wait(math.random(profile.durationMin, profile.durationMax))
             if touchFaultActive then
-                TriggerEvent('lb-phone-damage:lbui:update', {
+                SendNUIMessage({
                     action = 'lb-phone-damage:touchFault',
                     active = false
                 })

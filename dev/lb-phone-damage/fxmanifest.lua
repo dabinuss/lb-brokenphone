@@ -11,8 +11,12 @@ shared_script 'config.lua'
 server_script 'server.lua'
 client_script 'client.lua'
 
+ui_page 'html/index.html'
+
 files {
-    'html/cracks/**/*.png'
+    'html/index.html',
+    'html/lb-phone-damage.js',
+    'html/cracks/**/*.png',
 }
 
 dependency 'lb-phone'

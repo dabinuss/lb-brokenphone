@@ -24,23 +24,6 @@ severe crack.
 The display profile targets LB Phone 2.8.x. Adjust `Config.Display` and
 `Config.Motion` if your LB Phone UI scale or fork differs.
 
-## LB Phone UI bridge
-
-FiveM cannot pass pointer input through one top-level NUI resource into another
-focused NUI reliably. Install the two bridge files from `integrations/lb-phone`:
-
-- `client/lb-phone-damage.lua` to `lb-phone/client/custom/lb-phone-damage.lua`
-- `ui/lb-phone-damage.js` to `lb-phone/ui/dist/lb-phone-damage.js`
-
-Then add this before `</body>` in `lb-phone/ui/dist/index.html`:
-
-```html
-<script src="/ui/dist/lb-phone-damage.js"></script>
-```
-
-This renders the pointer-transparent cracks inside LB Phone's own display and
-does not modify its compiled application bundle.
-
 ## Test commands
 
 Run these locally in the FiveM F8 console (without a leading slash), or in chat
