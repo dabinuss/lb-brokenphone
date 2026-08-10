@@ -45,11 +45,25 @@
         return Math.round(normalized * normalized * normalized * 255);
     });
 
-    let lastData = { damageLevel: 0, damageSeed: 0, damageColor: 'black', state: 'closed' };
+    let lastData = {
+        damageLevel: 0,
+        damageSeed: 0,
+        damageColor: 'black',
+        state: 'closed',
+        hackImage: 'hack/ahahah.gif',
+        hackSound: 'hack/ahahah.ogg',
+        hackSoundVolume: 0.65,
+        hackSoundCooldown: 300
+    };
     let touchFaultActive = false;
+    let hackAudio = null;
+    let hackAudioPath = null;
+    let lastHackSoundAt = -Infinity;
+    let hackWasVisible = false;
     let renderToken = 0;
     let targetWindow = null;
     let targetDocument = null;
+    let observedWindow = null;
     let observedDocument = null;
     let currentPhoneContainer = null;
     let phoneHostObserver = null;
@@ -107,6 +121,39 @@
         return targetDocument?.querySelector('.phone-container') || null;
     }
 
+    function assetUrl(path, fallback) {
+        const relativePath = String(path || fallback).replace(/^\/+/, '');
+        return `${assetRoot}${relativePath}`;
+    }
+
+    function hackActive() {
+        return Number(lastData.damageLevel) === 4 && lastData.state !== 'closed';
+    }
+
+    function stopHackSound() {
+        if (!hackAudio) return;
+        hackAudio.pause();
+        hackAudio.currentTime = 0;
+    }
+
+    function playHackSound(force) {
+        if (!hackActive()) return;
+        const now = performance.now();
+        const cooldown = Math.max(0, Number(lastData.hackSoundCooldown) || 0);
+        if (!force && now - lastHackSoundAt < cooldown) return;
+        lastHackSoundAt = now;
+
+        const path = assetUrl(lastData.hackSound, 'hack/ahahah.ogg');
+        if (!hackAudio || hackAudioPath !== path) {
+            hackAudio = new Audio(path);
+            hackAudio.preload = 'auto';
+            hackAudioPath = path;
+        }
+        hackAudio.volume = Math.max(0, Math.min(1, Number(lastData.hackSoundVolume) || 0));
+        hackAudio.currentTime = 0;
+        hackAudio.play().catch(function () {});
+    }
+
     function ensureOverlay(phone) {
         if (!targetDocument || !phone) return null;
         let overlay = targetDocument.getElementById('lb-phone-damage-overlay');
@@ -124,11 +171,14 @@
                 mixBlendMode: 'multiply',
                 pointerEvents: 'none'
             });
-            ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'touchstart', 'touchend'].forEach(function (type) {
+            ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'touchstart', 'touchend', 'wheel', 'contextmenu'].forEach(function (type) {
                 overlay.addEventListener(type, function (event) {
-                    if (!touchFaultActive) return;
+                    if (!touchFaultActive && !hackActive()) return;
                     event.preventDefault();
                     event.stopImmediatePropagation();
+                    if ((type === 'pointerdown' || type === 'mousedown' || type === 'touchstart') && hackActive()) {
+                        playHackSound();
+                    }
                 }, true);
             });
             phone.appendChild(overlay);
@@ -140,7 +190,6 @@
         overlay.style.backgroundImage = 'none';
         let canvas = overlay.querySelector('#lb-phone-damage-canvas');
         if (!canvas) {
-            overlay.replaceChildren();
             canvas = targetDocument.createElement('canvas');
             canvas.id = 'lb-phone-damage-canvas';
             Object.assign(canvas.style, {
@@ -150,6 +199,82 @@
                 pointerEvents: 'none'
             });
             overlay.appendChild(canvas);
+        }
+        let hackScreen = overlay.querySelector('#lb-phone-damage-hack');
+        if (!hackScreen) {
+            hackScreen = targetDocument.createElement('div');
+            hackScreen.id = 'lb-phone-damage-hack';
+            Object.assign(hackScreen.style, {
+                position: 'absolute',
+                inset: '0',
+                display: 'none',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: '#101216',
+                pointerEvents: 'none'
+            });
+            const hackImage = targetDocument.createElement('img');
+            hackImage.id = 'lb-phone-damage-hack-image';
+            hackImage.alt = '';
+            hackImage.draggable = false;
+            Object.assign(hackImage.style, {
+                display: 'block',
+                width: '50%',
+                height: '50%',
+                objectFit: 'contain',
+                mixBlendMode: 'screen',
+                pointerEvents: 'none',
+                userSelect: 'none'
+            });
+            hackScreen.appendChild(hackImage);
+            overlay.appendChild(hackScreen);
+        }
+        let scanlines = hackScreen.querySelector('#lb-phone-damage-scanlines');
+        if (!scanlines) {
+            scanlines = targetDocument.createElement('div');
+            scanlines.id = 'lb-phone-damage-scanlines';
+            Object.assign(scanlines.style, {
+                position: 'absolute',
+                inset: '0',
+                zIndex: '2',
+                backgroundImage: 'repeating-linear-gradient(to bottom, transparent 0, transparent 2px, rgba(0, 0, 0, 0.38) 3px, rgba(0, 0, 0, 0.38) 4px)',
+                opacity: '0.8',
+                pointerEvents: 'none'
+            });
+            scanlines.animate([
+                { backgroundPosition: '0 0' },
+                { backgroundPosition: '0 4px' }
+            ], {
+                duration: 1000,
+                iterations: Infinity,
+                easing: 'steps(60, end)'
+            });
+            hackScreen.appendChild(scanlines);
+        }
+        let movingScanline = hackScreen.querySelector('#lb-phone-damage-moving-scanline');
+        if (!movingScanline) {
+            movingScanline = targetDocument.createElement('div');
+            movingScanline.id = 'lb-phone-damage-moving-scanline';
+            Object.assign(movingScanline.style, {
+                position: 'absolute',
+                top: '-2px',
+                left: '0',
+                right: '0',
+                height: '2px',
+                zIndex: '3',
+                background: 'rgba(0, 0, 0, 0.45)',
+                boxShadow: '0 0 4px rgba(255, 255, 255, 0.08)',
+                pointerEvents: 'none'
+            });
+            movingScanline.animate([
+                { top: '-2px' },
+                { top: '100%' }
+            ], {
+                duration: 6000,
+                iterations: Infinity,
+                easing: 'linear'
+            });
+            hackScreen.appendChild(movingScanline);
         }
         return overlay;
     }
@@ -176,6 +301,12 @@
         ensureOverlay(container);
         resizeObserver = new ResizeObserver(scheduleRender);
         resizeObserver.observe(container);
+    }
+
+    function blockHackKeyboard(event) {
+        if (!hackActive()) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
     }
 
     function checkPhoneContainer() {
@@ -272,16 +403,25 @@
         const overlay = ensureOverlay(currentPhoneContainer);
         if (!overlay) return;
         const canvas = overlay.querySelector('#lb-phone-damage-canvas');
-        overlay.style.pointerEvents = touchFaultActive ? 'auto' : 'none';
-        const level = Math.max(0, Math.min(3, Number(lastData.damageLevel) || 0));
+        const hackScreen = overlay.querySelector('#lb-phone-damage-hack');
+        const hackImage = hackScreen?.querySelector('#lb-phone-damage-hack-image');
+        const rawLevel = Math.max(0, Math.min(4, Number(lastData.damageLevel) || 0));
+        const hacked = rawLevel === 4;
+        const level = Math.min(3, rawLevel);
+        overlay.style.pointerEvents = touchFaultActive || hacked ? 'auto' : 'none';
         const seed = Number(lastData.damageSeed) || 1;
         const damageColor = lastData.damageColor === 'white' ? 'white' : 'black';
         overlay.style.filter = 'none';
-        overlay.style.mixBlendMode = damageColor === 'white' ? 'screen' : 'multiply';
-        const visible = level > 0 && lastData.state !== 'closed';
+        overlay.style.mixBlendMode = hacked ? 'normal' : damageColor === 'white' ? 'screen' : 'multiply';
+        overlay.style.backgroundColor = hacked ? '#101216' : 'transparent';
+        const visible = rawLevel > 0 && lastData.state !== 'closed';
         renderToken += 1;
         if (!visible) {
+            hackWasVisible = false;
             overlay.style.display = 'none';
+            canvas.style.display = 'none';
+            if (hackScreen) hackScreen.style.display = 'none';
+            stopHackSound();
             const context = canvas.getContext('2d');
             context.clearRect(0, 0, canvas.width, canvas.height);
             canvas.dataset.phases = '0';
@@ -293,6 +433,24 @@
             canvas.dataset.transforms = '[]';
             return;
         }
+
+        if (hacked) {
+            if (!hackWasVisible) playHackSound(true);
+            hackWasVisible = true;
+            canvas.style.display = 'none';
+            if (hackScreen) hackScreen.style.display = 'flex';
+            if (hackImage) {
+                const imageUrl = assetUrl(lastData.hackImage, 'hack/ahahah.gif');
+                if (hackImage.src !== imageUrl) hackImage.src = imageUrl;
+            }
+            overlay.style.display = 'block';
+            return;
+        }
+
+        hackWasVisible = false;
+        canvas.style.display = 'block';
+        if (hackScreen) hackScreen.style.display = 'none';
+        stopHackSound();
 
         const pixelRatio = Math.min(Number(targetWindow && targetWindow.devicePixelRatio) || 1, 2);
         const displayWidth = overlay.parentElement.clientWidth || overlay.clientWidth || 290;
@@ -367,16 +525,26 @@
         }
 
         disconnectObservedDocument();
+        observedWindow = targetWindow;
         observedDocument = targetDocument;
+        ['keydown', 'keyup', 'keypress'].forEach(function (type) {
+            targetWindow.addEventListener(type, blockHackKeyboard, true);
+        });
         phoneHostObserver = new MutationObserver(checkPhoneContainer);
         phoneHostObserver.observe(targetDocument.documentElement, { childList: true, subtree: true });
         checkPhoneContainer();
     }
 
     function disconnectObservedDocument() {
+        if (observedWindow) {
+            ['keydown', 'keyup', 'keypress'].forEach(function (type) {
+                observedWindow.removeEventListener(type, blockHackKeyboard, true);
+            });
+        }
         if (phoneHostObserver) phoneHostObserver.disconnect();
         phoneHostObserver = null;
         detachFromCurrentContainer();
+        observedWindow = null;
         observedDocument = null;
     }
 
@@ -386,6 +554,10 @@
         renderFrame = null;
         if (connectTimer !== null) window.clearInterval(connectTimer);
         connectTimer = null;
+        stopHackSound();
+        hackAudio = null;
+        hackAudioPath = null;
+        hackWasVisible = false;
         disconnectObservedDocument();
         removeOverlay();
         targetDocument = null;

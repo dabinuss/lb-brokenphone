@@ -23,6 +23,7 @@ files {
     'html/index.html',
     'html/lb-phone-damage.js',
     'html/cracks/**/*.webp',
+    'html/hack/*',
 }
 
 dependency 'lb-phone'

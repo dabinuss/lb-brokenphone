@@ -6,6 +6,10 @@ dropouts at medium and severe levels. Damage phases are cumulative: medium keeps
 the existing light crack and adds a medium crack; severe keeps both and adds a
 severe crack.
 
+Damage level 4 is a separate persistent hack state rather than another crack
+stage. It replaces the phone display with a black blocking screen and animation,
+blocks input, and plays a sound when the screen is clicked.
+
 ## Installation
 
 Use the ready-to-install resource from `build/lb-phone-damage`. The `dev`
@@ -28,6 +32,7 @@ directory contains development files and is not intended for server installation
    add_ace group.admin command.phonedamagearea allow
    add_ace group.admin command.phonedamagecolor allow
    add_ace group.admin command.phonerepair allow
+   add_ace group.admin command.phoneunhack allow
    add_ace group.admin command.phonerepairall allow
    ```
 
@@ -44,6 +49,23 @@ Config.DamageColor = 'white' -- 'black' or 'white'
 
 This value is the authoritative default for every player. It is not stored in
 client KVP or in the phone damage database.
+
+Configure the level-4 hack presentation in the same file:
+
+```lua
+Config.Hack = {
+    image = 'hack/ahahah.gif',
+    sound = 'hack/ahahah.ogg',
+    soundVolume = 0.65,
+    soundCooldown = 300
+}
+```
+
+The paths are relative to `html`. `soundVolume` accepts `0.0` to `1.0`, and
+`soundCooldown` prevents the sound from being restarted more often than the
+configured number of milliseconds.
+The sound also plays once whenever an already hacked phone is brought onto the
+screen. Further clicks restart it subject to `soundCooldown`.
 
 Large damage or repair events use batched reads and writes. The defaults are
 safe starting values for servers with several hundred players:
@@ -73,6 +95,8 @@ The client only reports an event type and normalized severity. The server owns
 the whitelist, cooldowns, probability roll, escalation, maximum result level,
 phone lookup, and persistence. Set `Config.AutoDamage.enabled = false` to disable
 automatic events without affecting commands, exports, repairs, or manual damage.
+Automatic damage and every escalation API remain limited to crack levels 1-3;
+they can never produce or advance the special hack state.
 
 Important global settings:
 
@@ -104,15 +128,14 @@ All commands are registered server-side. Run them in chat with a leading slash,
 or in the server console without one:
 
 ```text
-/phonedamage 1 [phoneNumber]
-/phonedamage 2 [phoneNumber]
-/phonedamage 3 [phoneNumber]
+/phonedamage <1-4> [phoneNumber]
 /phoneescalate [phoneNumber]
-/phonedamageall <1-3>
-/phonedamagearea <radius> [1-3]
+/phonedamageall <1-4>
+/phonedamagearea <radius> [1-4]
 /phonedamagecolor black
 /phonedamagecolor white
 /phonerepair [phoneNumber]
+/phoneunhack [phoneNumber]
 /phonerepairall
 ```
 
@@ -123,17 +146,28 @@ individual phone's persistent damage record.
 
 `/phoneescalate [phoneNumber]` increases damage by exactly one level: intact to
 light, light to medium, and medium to severe. A severe phone remains severe.
-Without a number, it uses the executing player's equipped phone.
+Without a number, it uses the executing player's equipped phone. It never
+creates or changes level 4.
 
-`/phonedamageall <1-3>` applies the selected damage level to every connected
+`/phonedamage 4 [phoneNumber]` activates the persistent hack screen. It is a
+special state, not an escalation after severe damage. Normal damage and
+escalation cannot replace it; use `/phonerepair` to remove it.
+
+`/phoneunhack [phoneNumber]` is the dedicated hack repair command. It only
+removes level 4 and returns `phone_not_hacked` for an intact or normally damaged
+phone. When command restrictions are enabled, it uses its own
+`command.phoneunhack` ACE permission.
+
+`/phonedamageall <1-4>` applies the selected damage level to every connected
 player's currently equipped phone. Players without an equipped phone are
 skipped. The command uses the optimized bulk path and is intended for testing
 or server-wide events.
 
-`/phonedamagearea <radius> [1-3]` uses the executing player's position as its
+`/phonedamagearea <radius> [1-4]` uses the executing player's position as its
 center and damages currently equipped phones inside the radius. Without a
 level, every affected phone advances by exactly one stage. Providing a level
-sets that fixed minimum level instead. The default cause is `explosion`. The
+sets that fixed minimum level instead; level 4 activates the hack. The default
+cause is `explosion`. The
 command is only available in-game and the radius is limited by
 `Config.MaxDamageAreaRadius`.
 
@@ -160,8 +194,9 @@ These exports are server-side APIs. Parameter meanings:
   `z`.
 - `radius`: Distance around `coords` in game units/metres. It must be greater
   than zero and may not exceed `Config.MaxDamageAreaRadius`.
-- `level`: Damage level `1`, `2`, or `3`. Applying a fixed level never lowers
-  existing damage. Passing `nil` to `ApplyPhoneDamageInArea` uses escalation.
+- `level`: Fixed damage level `1`, `2`, `3`, or special hack level `4`. Applying
+  a fixed level never lowers existing state. Passing `nil` to
+  `ApplyPhoneDamageInArea` uses crack escalation, which remains limited to 3.
 - `cause`: Optional descriptive label such as `explosion`, `emp_event`, or
   `vehicle_crash`. It is useful to the calling integration and debug output;
   it does not change the visual damage calculation.
@@ -176,6 +211,19 @@ exports['lb-phone-damage']:ApplyPhoneDamageDeltaByNumber(phoneNumber, 2, 3, 'hea
 
 -- Uses AutoDamage chance, severity, cooldown, escalation, and level-cap settings.
 exports['lb-phone-damage']:TryAutoDamage(source, 'vehicle_crash', 0.82)
+
+exports['lb-phone-damage']:HackPhone(source, 'story_event')
+exports['lb-phone-damage']:HackPhoneByNumber(phoneNumber, 'story_event')
+exports['lb-phone-damage']:HackBulkPhones(playerSources, 'story_event')
+exports['lb-phone-damage']:HackAllPhones('server_event')
+exports['lb-phone-damage']:HackPhonesInArea(coords, 75.0, 'area_hack')
+
+local hacked, hackErr, hackState = exports['lb-phone-damage']:IsPhoneHacked(source)
+local numberHacked, numberHackErr, numberHackState =
+    exports['lb-phone-damage']:IsPhoneNumberHacked(phoneNumber)
+
+exports['lb-phone-damage']:RepairHackedPhone(source)
+exports['lb-phone-damage']:RepairHackedPhoneByNumber(phoneNumber)
 
 local success, err, summary = exports['lb-phone-damage']:ApplyBulkPhoneDamage(
     playerSources,
@@ -206,7 +254,7 @@ local areaEscalated, areaEscalateErr, areaEscalateSummary =
     )
 
 local damage = exports['lb-phone-damage']:GetPhoneDamage(phoneNumber)
--- { damageLevel = 0..3, damageSeed = number }
+-- { damageLevel = 0..4, damageSeed = number, isHacked = boolean }
 
 exports['lb-phone-damage']:RepairPhone(source)
 exports['lb-phone-damage']:RepairPhoneByNumber(phoneNumber)
@@ -219,6 +267,8 @@ local allRepaired, allRepairErr, allRepairSummary =
 Single-phone damage and escalation exports return `success, error, damage`.
 Delta and `TryAutoDamage` exports additionally return `changed` as their fourth
 value. `changed` is false when the phone was already at the event's maximum.
+`HackPhone` and `HackPhoneByNumber` return `success, error, damage`; hack bulk,
+all-player, and area exports return `success, error, summary`.
 Repair exports return `success, error`. Bulk, all-player, and area exports
 return `success, error, summary`. `GetPhoneDamage` returns the damage state, or
 `nil, error` when it cannot be loaded.
@@ -228,6 +278,18 @@ medium to severe; severe remains severe. Applying a lower or equal fixed level
 never lowers damage or changes its visual seed. The original seed is also
 retained when damage increases, so every previously visible crack remains
 exactly in place.
+
+The dedicated hack exports are equivalent to applying fixed level 4 and make
+the caller's intent explicit. A hacked phone remains hacked when normal damage
+or escalation is attempted. Repair deletes the persistent state and restores
+the normal phone display.
+
+Level 4 is the persistent hack marker; no additional database column is needed.
+`GetPhoneDamage` exposes it as `isHacked`, while `IsPhoneHacked(source)` and
+`IsPhoneNumberHacked(phoneNumber)` provide direct checks and return
+`hacked, error, state`. The dedicated repair exports only succeed for level-4
+phones, making them suitable for repair-shop or mission integrations without
+accidentally repairing ordinary cracked displays.
 
 `ApplyPhoneDamageDelta(source, escalation, maxResultLevel, cause)` and its
 phone-number variant atomically add one or more levels without exceeding the

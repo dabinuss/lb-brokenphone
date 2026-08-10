@@ -6,6 +6,15 @@ Config.Debug = false
 -- Global crack color for every player. Allowed values: 'black' or 'white'.
 Config.DamageColor = 'white'
 
+-- Special persistent hack state used by damage level 4. Asset paths are
+-- relative to the resource's html directory.
+Config.Hack = {
+    image = 'hack/ahahah.gif', -- Animation shown in the center of the black phone display.
+    sound = 'hack/ahahah.ogg', -- Sound played when the blocked display is clicked.
+    soundVolume = 0.65,        -- Playback volume from 0.0 (silent) to 1.0 (full volume).
+    soundCooldown = 300        -- Minimum milliseconds between click sounds.
+}
+
 Config.Database = {
     tableName = 'phone_damage',              -- SQL table used for persistent phone damage.
     jsonFile = 'data/phone_damage.json',     -- Resource-relative fallback file when oxmysql is unavailable.
@@ -107,12 +116,13 @@ Config.AutoDamage = {
 Config.Commands = {
     enabled = true,                         -- Register test/admin commands; production exports remain available when false.
     restricted = false,                    -- Require matching ACE permissions for damage and repair commands.
-    setDamage = 'phonedamage',              -- Command used to set damage level 1-3.
+    setDamage = 'phonedamage',              -- Command used to set damage level 1-3 or special hack level 4.
     escalateDamage = 'phoneescalate',       -- Command used to increase damage by exactly one level.
     setDamageAll = 'phonedamageall',        -- ACE-only command that damages every player's currently equipped phone.
     setDamageArea = 'phonedamagearea',      -- ACE-only command that damages equipped phones around the executing player.
     setDamageColor = 'phonedamagecolor',    -- Global color command; always requires command.phonedamagecolor ACE.
     repair = 'phonerepair',                 -- Command used to remove all damage from a phone.
+    unhack = 'phoneunhack',                 -- Command that repairs only phones currently marked as hacked (level 4).
     repairAll = 'phonerepairall',           -- ACE-only command that repairs every player's currently equipped phone.
     legacySetDamage = 'brokenphone',        -- Backward-compatible damage alias; set to false to disable.
     legacyRepair = 'brokenphonerepair'      -- Backward-compatible repair alias; set to false to disable.
@@ -166,6 +176,13 @@ end
 
 assert(Config.DamageColor == 'black' or Config.DamageColor == 'white',
     "Config.DamageColor must be 'black' or 'white'")
+assert(type(Config.Hack) == 'table', 'Config.Hack must be a table')
+assert(type(Config.Hack.image) == 'string' and Config.Hack.image ~= '',
+    'Config.Hack.image must be a non-empty html-relative path')
+assert(type(Config.Hack.sound) == 'string' and Config.Hack.sound ~= '',
+    'Config.Hack.sound must be a non-empty html-relative path')
+assertNumberRange('Config.Hack.soundVolume', Config.Hack.soundVolume, 0, 1)
+assertInteger('Config.Hack.soundCooldown', Config.Hack.soundCooldown, 0)
 assert(type(Config.Debug) == 'boolean', 'Config.Debug must be true or false')
 assert(type(Config.Database) == 'table', 'Config.Database must be a table')
 assert(type(Config.Database.tableName) == 'string' and Config.Database.tableName:match('^[%w_]+$'),
@@ -217,6 +234,7 @@ validateCommandName('Config.Commands.setDamageAll', Config.Commands.setDamageAll
 validateCommandName('Config.Commands.setDamageArea', Config.Commands.setDamageArea)
 validateCommandName('Config.Commands.setDamageColor', Config.Commands.setDamageColor)
 validateCommandName('Config.Commands.repair', Config.Commands.repair)
+validateCommandName('Config.Commands.unhack', Config.Commands.unhack)
 validateCommandName('Config.Commands.repairAll', Config.Commands.repairAll)
 validateCommandName('Config.Commands.legacySetDamage', Config.Commands.legacySetDamage, true)
 validateCommandName('Config.Commands.legacyRepair', Config.Commands.legacyRepair, true)

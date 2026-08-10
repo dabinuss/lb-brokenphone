@@ -40,7 +40,11 @@ local function sendNuiUpdate(force)
         state.visualState,
         state.damageLevel,
         state.damageSeed,
-        state.damageColor
+        state.damageColor,
+        Config.Hack.image,
+        Config.Hack.sound,
+        Config.Hack.soundVolume,
+        Config.Hack.soundCooldown
     }, ':')
     if not force and stateKey == lastNuiStateKey then return end
     lastNuiStateKey = stateKey
@@ -50,7 +54,12 @@ local function sendNuiUpdate(force)
         state = state.visualState,
         damageLevel = state.damageLevel,
         damageSeed = state.damageSeed,
-        damageColor = state.damageColor
+        isHacked = state.damageLevel == 4,
+        damageColor = state.damageColor,
+        hackImage = Config.Hack.image,
+        hackSound = Config.Hack.sound,
+        hackSoundVolume = Config.Hack.soundVolume,
+        hackSoundCooldown = Config.Hack.soundCooldown
     })
 end
 
@@ -79,7 +88,11 @@ local function stopTouchFaults()
 end
 
 local function touchFaultsNeeded()
-    return Config.Touch.enabled == true and state.damageLevel >= 2 and state.phoneOpen and state.phoneOnScreen
+    return Config.Touch.enabled == true
+        and state.damageLevel >= 2
+        and state.damageLevel <= 3
+        and state.phoneOpen
+        and state.phoneOnScreen
 end
 
 local function startTouchFaults()
@@ -169,7 +182,7 @@ end
 
 RegisterNetEvent('lb-phone-damage:client:receiveDamage', function(phoneNumber, damageLevel, damageSeed)
     if phoneNumber ~= state.phoneNumber then return end
-    state.damageLevel = math.max(0, math.min(3, tonumber(damageLevel) or 0))
+    state.damageLevel = math.max(0, math.min(4, tonumber(damageLevel) or 0))
     state.damageSeed = tonumber(damageSeed) or 0
     updateVisibility()
 end)
@@ -219,6 +232,7 @@ exports('GetDamageState', function()
         phoneNumber = state.phoneNumber,
         damageLevel = state.damageLevel,
         damageSeed = state.damageSeed,
+        isHacked = state.damageLevel == 4,
         damageColor = state.damageColor,
         phoneOpen = state.phoneOpen,
         phoneOnScreen = state.phoneOnScreen

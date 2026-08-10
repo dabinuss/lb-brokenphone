@@ -30,7 +30,7 @@ end
 
 local function normalizeLevel(level)
     level = tonumber(level)
-    if not level or level % 1 ~= 0 or level < 1 or level > 3 then return nil end
+    if not level or level % 1 ~= 0 or level < 1 or level > 4 then return nil end
     return level
 end
 
@@ -210,9 +210,11 @@ local function awaitResult(startOperation)
 end
 
 local function copyDamageState(state)
+    local damageLevel = tonumber(state and state.damageLevel) or 0
     return {
-        damageLevel = tonumber(state and state.damageLevel) or 0,
-        damageSeed = tonumber(state and state.damageSeed) or 0
+        damageLevel = damageLevel,
+        damageSeed = tonumber(state and state.damageSeed) or 0,
+        isHacked = damageLevel == 4
     }
 end
 
@@ -402,6 +404,24 @@ end
 local function repairByNumber(phoneNumber)
     return runManaged(function()
         return repairByNumberUnlocked(phoneNumber)
+    end)
+end
+
+local function repairHackedByNumber(phoneNumber)
+    return runManaged(function()
+        local current, err = getCachedDamageUnlocked(phoneNumber)
+        if err then return false, err end
+        if current.damageLevel ~= 4 then return false, 'phone_not_hacked', current end
+        local success, repairError = repairByNumberUnlocked(phoneNumber)
+        return success, repairError
+    end)
+end
+
+local function isPhoneNumberHacked(phoneNumber)
+    return runManaged(function()
+        local state, err = getCachedDamageUnlocked(phoneNumber)
+        if err then return nil, err end
+        return state.damageLevel == 4, nil, state
     end)
 end
 
@@ -692,6 +712,25 @@ local function repairAllPhones()
     return repairBulkDamage(GetPlayers())
 end
 
+local function hackPhone(playerSource, cause)
+    local phoneNumber = resolveEquippedPhone(playerSource)
+    if not phoneNumber then return false, 'no_equipped_phone' end
+    setActivePhone(playerSource, phoneNumber)
+    return applyByNumber(phoneNumber, 4, cause or 'hack')
+end
+
+local function hackPhoneByNumber(phoneNumber, cause)
+    return applyByNumber(phoneNumber, 4, cause or 'hack')
+end
+
+local function hackBulkPhones(sources, cause)
+    return applyBulkDamage(sources, 4, cause or 'hack')
+end
+
+local function hackAllPhones(cause)
+    return applyPhoneDamageToAll(4, cause or 'hack')
+end
+
 local function normalizeAreaCenter(coords)
     if coords == nil then return nil end
     local ok, x, y, z = pcall(function()
@@ -763,6 +802,10 @@ local function escalatePhoneDamageInArea(coords, radius, cause)
     return applyPhoneDamageInArea(coords, radius, nil, cause or 'explosion')
 end
 
+local function hackPhonesInArea(coords, radius, cause)
+    return applyPhoneDamageInArea(coords, radius, 4, cause or 'hack')
+end
+
 local function commandReply(playerSource, message, success)
     print(('[lb-phone-damage] %s'):format(message))
     if playerSource and playerSource > 0 then
@@ -785,6 +828,12 @@ local function hasRepairPermission(playerSource)
     if not Config.Commands.restricted then return true end
     return IsPlayerAceAllowed(playerSource, ('command.%s'):format(Config.Commands.repair))
         or (Config.Commands.legacyRepair and IsPlayerAceAllowed(playerSource, ('command.%s'):format(Config.Commands.legacyRepair)))
+end
+
+local function hasUnhackPermission(playerSource)
+    if playerSource == 0 then return true end
+    if not Config.Commands.restricted then return true end
+    return IsPlayerAceAllowed(playerSource, ('command.%s'):format(Config.Commands.unhack))
 end
 
 local function hasEscalatePermission(playerSource)
@@ -882,6 +931,15 @@ exports('GetPhoneDamage', function(phoneNumber)
     end)
 end)
 
+exports('IsPhoneHacked', function(playerSource)
+    local phoneNumber = resolveEquippedPhone(playerSource)
+    if not phoneNumber then return nil, 'no_equipped_phone' end
+    setActivePhone(playerSource, phoneNumber)
+    return isPhoneNumberHacked(phoneNumber)
+end)
+
+exports('IsPhoneNumberHacked', isPhoneNumberHacked)
+
 exports('RepairPhone', function(playerSource)
     local phoneNumber = resolveEquippedPhone(playerSource)
     if not phoneNumber then return false, 'no_equipped_phone' end
@@ -890,8 +948,20 @@ exports('RepairPhone', function(playerSource)
 end)
 
 exports('RepairPhoneByNumber', repairByNumber)
+exports('RepairHackedPhone', function(playerSource)
+    local phoneNumber = resolveEquippedPhone(playerSource)
+    if not phoneNumber then return false, 'no_equipped_phone' end
+    setActivePhone(playerSource, phoneNumber)
+    return repairHackedByNumber(phoneNumber)
+end)
+exports('RepairHackedPhoneByNumber', repairHackedByNumber)
 exports('RepairBulkPhoneDamage', repairBulkDamage)
 exports('RepairAllPhones', repairAllPhones)
+exports('HackPhone', hackPhone)
+exports('HackPhoneByNumber', hackPhoneByNumber)
+exports('HackBulkPhones', hackBulkPhones)
+exports('HackAllPhones', hackAllPhones)
+exports('HackPhonesInArea', hackPhonesInArea)
 
 if Config.Commands.enabled then
     local function damageCommand(playerSource, args)
@@ -901,7 +971,7 @@ if Config.Commands.enabled then
 
         local level = normalizeLevel(args[1])
         if not level then
-            commandReply(playerSource, ('Usage: /%s <1-3> [phoneNumber]'):format(Config.Commands.setDamage), false)
+            commandReply(playerSource, ('Usage: /%s <1-4> [phoneNumber]'):format(Config.Commands.setDamage), false)
             return
         end
 
@@ -946,6 +1016,27 @@ if Config.Commands.enabled then
             or ('Repair failed: %s'):format(err or 'unknown_error'), success)
     end
 
+    local function unhackCommand(playerSource, args)
+        if not hasUnhackPermission(playerSource) then
+            return commandReply(playerSource, 'You do not have permission to use this command.', false)
+        end
+
+        local equippedPhone = resolveEquippedPhone(playerSource)
+        local requestedPhone = normalizePhoneNumber(args[1])
+        if playerSource > 0 and not Config.Commands.restricted and requestedPhone and requestedPhone ~= equippedPhone then
+            return commandReply(playerSource, 'You can only unhack the phone you currently have equipped.', false)
+        end
+        local phoneNumber = requestedPhone or equippedPhone
+        if not phoneNumber then
+            return commandReply(playerSource, ('Usage: /%s [phoneNumber]'):format(Config.Commands.unhack), false)
+        end
+
+        local success, err = repairHackedByNumber(phoneNumber)
+        commandReply(playerSource, success
+            and ('Removed the hack from %s.'):format(phoneNumber)
+            or ('Unhack failed: %s'):format(err or 'unknown_error'), success)
+    end
+
     local function escalateCommand(playerSource, args)
         if not hasEscalatePermission(playerSource) then
             return commandReply(playerSource, 'You do not have permission to use this command.', false)
@@ -979,7 +1070,7 @@ if Config.Commands.enabled then
 
         local level = normalizeLevel(args[1])
         if not level then
-            return commandReply(playerSource, ('Usage: /%s <1-3>'):format(Config.Commands.setDamageAll), false)
+            return commandReply(playerSource, ('Usage: /%s <1-4>'):format(Config.Commands.setDamageAll), false)
         end
 
         local success, err, summary = applyPhoneDamageToAll(level, 'test_command_all')
@@ -1002,7 +1093,7 @@ if Config.Commands.enabled then
         local radius = normalizeAreaRadius(args[1])
         local level = args[2] and normalizeLevel(args[2]) or nil
         if not radius or (args[2] ~= nil and not level) then
-            return commandReply(playerSource, ('Usage: /%s <radius> [1-3]; maximum radius: %d'):format(
+            return commandReply(playerSource, ('Usage: /%s <radius> [1-4]; maximum radius: %d'):format(
                 Config.Commands.setDamageArea, Config.MaxDamageAreaRadius
             ), false)
         end
@@ -1064,6 +1155,7 @@ if Config.Commands.enabled then
     RegisterCommand(Config.Commands.setDamageArea, damageAreaCommand, false)
     RegisterCommand(Config.Commands.setDamageColor, damageColorCommand, false)
     RegisterCommand(Config.Commands.repair, repairCommand, false)
+    RegisterCommand(Config.Commands.unhack, unhackCommand, false)
     RegisterCommand(Config.Commands.repairAll, repairAllCommand, false)
 
     if Config.Commands.legacySetDamage and Config.Commands.legacySetDamage ~= Config.Commands.setDamage then
