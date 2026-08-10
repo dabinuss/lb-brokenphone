@@ -12,6 +12,14 @@ Config.Database = {
     allowJsonFallback = true                 -- Use the JSON file instead of failing when oxmysql is not started.
 }
 
+-- Bulk persistence settings for large events affecting hundreds of phones.
+Config.Persistence = {
+    batchSize = 50,       -- Maximum phone records written by one multi-row query.
+    readBatchSize = 200,  -- Maximum phone numbers loaded by one cache hydration query.
+    batchDelay = 25,      -- Milliseconds yielded between database/client batches.
+    resolveYieldEvery = 100 -- Yield after resolving this many equipped phone numbers.
+}
+
 -- Time in milliseconds before opening/closing transitions are considered complete.
 Config.Transition = {
     openDuration = 500, -- Delay before the overlay enters its fully open state.
@@ -40,14 +48,21 @@ Config.Commands = {
     enabled = true,                         -- Register test/admin commands; production exports remain available when false.
     restricted = false,                    -- Require matching ACE permissions for damage and repair commands.
     setDamage = 'phonedamage',              -- Command used to set damage level 1-3.
+    escalateDamage = 'phoneescalate',       -- Command used to increase damage by exactly one level.
+    setDamageAll = 'phonedamageall',        -- ACE-only command that damages every player's currently equipped phone.
+    setDamageArea = 'phonedamagearea',      -- ACE-only command that damages equipped phones around the executing player.
     setDamageColor = 'phonedamagecolor',    -- Global color command; always requires command.phonedamagecolor ACE.
     repair = 'phonerepair',                 -- Command used to remove all damage from a phone.
+    repairAll = 'phonerepairall',           -- ACE-only command that repairs every player's currently equipped phone.
     legacySetDamage = 'brokenphone',        -- Backward-compatible damage alias; set to false to disable.
     legacyRepair = 'brokenphonerepair'      -- Backward-compatible repair alias; set to false to disable.
 }
 
 -- Maximum accepted phone-number length. Keep this aligned with VARCHAR(32) in database.sql.
 Config.MaxPhoneNumberLength = 32
+
+-- Safety limit in game units/metres for /phonedamagearea and area exports.
+Config.MaxDamageAreaRadius = 10000
 
 local function assertInteger(name, value, minimum)
     assert(type(value) == 'number' and value % 1 == 0 and value >= minimum,
@@ -81,6 +96,11 @@ assert(type(Config.Database.jsonFile) == 'string' and Config.Database.jsonFile ~
     'Config.Database.jsonFile must be a non-empty resource-relative path')
 assert(type(Config.Database.allowJsonFallback) == 'boolean',
     'Config.Database.allowJsonFallback must be true or false')
+assert(type(Config.Persistence) == 'table', 'Config.Persistence must be a table')
+assertInteger('Config.Persistence.batchSize', Config.Persistence.batchSize, 1)
+assertInteger('Config.Persistence.readBatchSize', Config.Persistence.readBatchSize, 1)
+assertInteger('Config.Persistence.batchDelay', Config.Persistence.batchDelay, 0)
+assertInteger('Config.Persistence.resolveYieldEvery', Config.Persistence.resolveYieldEvery, 1)
 assert(type(Config.Transition) == 'table', 'Config.Transition must be a table')
 assertInteger('Config.Transition.openDuration', Config.Transition.openDuration, 0)
 assertInteger('Config.Transition.closeDuration', Config.Transition.closeDuration, 0)
@@ -92,10 +112,15 @@ assert(type(Config.Commands) == 'table', 'Config.Commands must be a table')
 assert(type(Config.Commands.enabled) == 'boolean', 'Config.Commands.enabled must be true or false')
 assert(type(Config.Commands.restricted) == 'boolean', 'Config.Commands.restricted must be true or false')
 validateCommandName('Config.Commands.setDamage', Config.Commands.setDamage)
+validateCommandName('Config.Commands.escalateDamage', Config.Commands.escalateDamage)
+validateCommandName('Config.Commands.setDamageAll', Config.Commands.setDamageAll)
+validateCommandName('Config.Commands.setDamageArea', Config.Commands.setDamageArea)
 validateCommandName('Config.Commands.setDamageColor', Config.Commands.setDamageColor)
 validateCommandName('Config.Commands.repair', Config.Commands.repair)
+validateCommandName('Config.Commands.repairAll', Config.Commands.repairAll)
 validateCommandName('Config.Commands.legacySetDamage', Config.Commands.legacySetDamage, true)
 validateCommandName('Config.Commands.legacyRepair', Config.Commands.legacyRepair, true)
 assertInteger('Config.MaxPhoneNumberLength', Config.MaxPhoneNumberLength, 1)
 assert(Config.MaxPhoneNumberLength <= 32,
     'Config.MaxPhoneNumberLength must not exceed the VARCHAR(32) database schema')
+assertInteger('Config.MaxDamageAreaRadius', Config.MaxDamageAreaRadius, 1)
