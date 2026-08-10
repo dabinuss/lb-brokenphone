@@ -10,6 +10,10 @@ local managerQueue = {}
 local managerQueueHead = 1
 local managerRunning = false
 local damageColor = Config.DamageColor == 'white' and 'white' or 'black'
+local hackTimerTokens = {}
+local scheduleHackExpiry
+local clearHackUnlocked
+local hackBulkPhones
 
 local tableName = tostring(Config.Database.tableName or 'phone_damage')
 local fallbackPath = tostring(Config.Database.jsonFile or 'data/phone_damage.json')
@@ -32,6 +36,21 @@ local function normalizeLevel(level)
     level = tonumber(level)
     if not level or level % 1 ~= 0 or level < 1 or level > 4 then return nil end
     return level
+end
+
+local function normalizeDamageLevel(level)
+    level = tonumber(level)
+    if not level or level % 1 ~= 0 or level < 1 or level > 3 then return nil end
+    return level
+end
+
+local function normalizeHackDuration(durationMs)
+    if durationMs == nil then durationMs = Config.Hack.defaultDuration end
+    durationMs = tonumber(durationMs)
+    if not durationMs or durationMs % 1 ~= 0 or durationMs < 0 or durationMs > Config.Hack.maxDuration then
+        return nil
+    end
+    return durationMs
 end
 
 local function normalizeDamageColor(value)
@@ -90,8 +109,10 @@ local function ensureDatabase(callback)
         local sql = ([=[
             CREATE TABLE IF NOT EXISTS `%s` (
                 `phone_number` VARCHAR(32) NOT NULL,
-                `damage_level` TINYINT UNSIGNED NOT NULL,
-                `damage_seed` INT UNSIGNED NOT NULL,
+                `damage_level` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+                `damage_seed` INT UNSIGNED NOT NULL DEFAULT 0,
+                `is_hacked` TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,
+                `hack_expires_at` BIGINT UNSIGNED NOT NULL DEFAULT 0,
                 PRIMARY KEY (`phone_number`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ]=]):format(tableName)
@@ -101,7 +122,50 @@ local function ensureDatabase(callback)
                 if err or result == nil then
                     return failDatabaseStart(err or 'database_initialization_failed')
                 end
-                finishDatabaseStart('oxmysql')
+                local migrations = {
+                    ('ALTER TABLE `%s` ADD COLUMN IF NOT EXISTS `is_hacked` TINYINT(1) UNSIGNED NOT NULL DEFAULT 0 AFTER `damage_seed`'):format(tableName),
+                    ('ALTER TABLE `%s` ADD COLUMN IF NOT EXISTS `hack_expires_at` BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER `is_hacked`'):format(tableName)
+                }
+                local function runMigration(index)
+                    if index > #migrations then
+                        local constraintSql = [[
+                            SELECT CONSTRAINT_NAME AS constraintName
+                            FROM information_schema.TABLE_CONSTRAINTS
+                            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+                                AND CONSTRAINT_NAME = 'phone_damage_level' AND CONSTRAINT_TYPE = 'CHECK'
+                            LIMIT 1
+                        ]]
+                        return exports.oxmysql.query(nil, constraintSql, { tableName }, function(rows, constraintError)
+                            if constraintError or rows == nil then
+                                return failDatabaseStart(constraintError or 'database_migration_failed')
+                            end
+                            local function migrateLegacyHack()
+                                local legacySql = ('UPDATE `%s` SET `damage_level` = 0, `damage_seed` = 0, `is_hacked` = 1, `hack_expires_at` = 0 WHERE `damage_level` = 4'):format(tableName)
+                                exports.oxmysql.query(nil, legacySql, {}, function(legacyResult, legacyError)
+                                    if legacyError or legacyResult == nil then
+                                        return failDatabaseStart(legacyError or 'database_migration_failed')
+                                    end
+                                    finishDatabaseStart('oxmysql')
+                                end, GetCurrentResourceName(), true)
+                            end
+                            if not rows[1] then return migrateLegacyHack() end
+                            local dropSql = ('ALTER TABLE `%s` DROP CONSTRAINT `phone_damage_level`'):format(tableName)
+                            exports.oxmysql.query(nil, dropSql, {}, function(dropResult, dropError)
+                                if dropError or dropResult == nil then
+                                    return failDatabaseStart(dropError or 'database_migration_failed')
+                                end
+                                migrateLegacyHack()
+                            end, GetCurrentResourceName(), true)
+                        end, GetCurrentResourceName(), true)
+                    end
+                    exports.oxmysql.query(nil, migrations[index], {}, function(migrationResult, migrationError)
+                        if migrationError or migrationResult == nil then
+                            return failDatabaseStart(migrationError or 'database_migration_failed')
+                        end
+                        runMigration(index + 1)
+                    end, GetCurrentResourceName(), true)
+                end
+                runMigration(1)
             end, GetCurrentResourceName(), true)
         end)
         if not invoked then failDatabaseStart(invokeError) end
@@ -132,17 +196,20 @@ local function loadDamageFromStorage(phoneNumber, callback)
         if databaseMode == 'json' then
             local row = fallbackData[phoneNumber]
             if not row then return callback(nil) end
+            local legacyHack = tonumber(row.damageLevel) == 4
             return callback({
-                damageLevel = tonumber(row.damageLevel) or 0,
-                damageSeed = tonumber(row.damageSeed) or 0
+                damageLevel = legacyHack and 0 or tonumber(row.damageLevel) or 0,
+                damageSeed = legacyHack and 0 or tonumber(row.damageSeed) or 0,
+                isHacked = legacyHack or row.isHacked == true,
+                hackExpiresAt = tonumber(row.hackExpiresAt) or 0
             })
         end
 
-        query(('SELECT damage_level AS damageLevel, damage_seed AS damageSeed FROM `%s` WHERE phone_number = ? LIMIT 1'):format(tableName), { phoneNumber }, function(rows, err)
+        query(('SELECT damage_level AS damageLevel, damage_seed AS damageSeed, is_hacked AS isHacked, hack_expires_at AS hackExpiresAt FROM `%s` WHERE phone_number = ? LIMIT 1'):format(tableName), { phoneNumber }, function(rows, err)
             if err then return callback(nil, 'database_query_failed') end
             local row = rows and rows[1]
             if not row then return callback(nil) end
-            callback({ damageLevel = tonumber(row.damageLevel) or 0, damageSeed = tonumber(row.damageSeed) or 0 })
+            callback(row)
         end)
     end)
 end
@@ -151,16 +218,14 @@ local function persistDamageState(phoneNumber, state, callback)
     ensureDatabase(function(ready, databaseError)
         if not ready then return callback(false, databaseError or 'database_unavailable') end
         if databaseMode == 'json' then
-            fallbackData[phoneNumber] = {
-                damageLevel = state.damageLevel,
-                damageSeed = state.damageSeed
-            }
+            fallbackData[phoneNumber] = state
             local saved = saveFallbackData()
             return callback(saved, saved and nil or 'persistence_failed')
         end
 
         local sql = ([=[
-            INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`) VALUES (?, ?, ?)
+            INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `is_hacked`, `hack_expires_at`)
+            VALUES (?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
                 `damage_level` = GREATEST(`damage_level`, VALUES(`damage_level`)),
                 `damage_seed` = CASE
@@ -168,23 +233,43 @@ local function persistDamageState(phoneNumber, state, callback)
                     ELSE `damage_seed`
                 END
         ]=]):format(tableName)
-        query(sql, { phoneNumber, state.damageLevel, state.damageSeed }, function(_, err)
+        query(sql, { phoneNumber, state.damageLevel, state.damageSeed, state.isHacked and 1 or 0, state.hackExpiresAt }, function(_, err)
             if err then return callback(false, 'database_query_failed') end
             callback(true)
         end)
     end)
 end
 
-local function persistRepair(phoneNumber, callback)
+local function persistWholeState(phoneNumber, state, callback)
     ensureDatabase(function(ready, databaseError)
         if not ready then return callback(false, databaseError or 'database_unavailable') end
         if databaseMode == 'json' then
-            fallbackData[phoneNumber] = nil
+            if state.damageLevel == 0 and not state.isHacked then
+                fallbackData[phoneNumber] = nil
+            else
+                fallbackData[phoneNumber] = state
+            end
             if not saveFallbackData() then return callback(false, 'persistence_failed') end
             return callback(true)
         end
 
-        query(('DELETE FROM `%s` WHERE phone_number = ?'):format(tableName), { phoneNumber }, function(_, err)
+        local sql, params
+        if state.damageLevel == 0 and not state.isHacked then
+            sql = ('DELETE FROM `%s` WHERE phone_number = ?'):format(tableName)
+            params = { phoneNumber }
+        else
+            sql = ([=[
+                INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `is_hacked`, `hack_expires_at`)
+                VALUES (?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    `damage_level` = VALUES(`damage_level`),
+                    `damage_seed` = VALUES(`damage_seed`),
+                    `is_hacked` = VALUES(`is_hacked`),
+                    `hack_expires_at` = VALUES(`hack_expires_at`)
+            ]=]):format(tableName)
+            params = { phoneNumber, state.damageLevel, state.damageSeed, state.isHacked and 1 or 0, state.hackExpiresAt }
+        end
+        query(sql, params, function(_, err)
             if err then return callback(false, 'database_query_failed') end
             callback(true)
         end)
@@ -210,11 +295,14 @@ local function awaitResult(startOperation)
 end
 
 local function copyDamageState(state)
-    local damageLevel = tonumber(state and state.damageLevel) or 0
+    local damageLevel = math.max(0, math.min(3, tonumber(state and state.damageLevel) or 0))
+    local isHacked = state and (state.isHacked == true or tonumber(state.isHacked) == 1) or false
+    local hackExpiresAt = math.max(0, tonumber(state and state.hackExpiresAt) or 0)
     return {
         damageLevel = damageLevel,
-        damageSeed = tonumber(state and state.damageSeed) or 0,
-        isHacked = damageLevel == 4
+        damageSeed = damageLevel > 0 and tonumber(state and state.damageSeed) or 0,
+        isHacked = isHacked,
+        hackExpiresAt = isHacked and hackExpiresAt or 0
     }
 end
 
@@ -279,7 +367,9 @@ local function sendDamageState(playerSource, phoneNumber, state)
         playerSource,
         phoneNumber,
         state.damageLevel,
-        state.damageSeed
+        state.damageSeed,
+        state.isHacked,
+        state.hackExpiresAt
     )
 end
 
@@ -302,7 +392,16 @@ local function getCachedDamageUnlocked(phoneNumber)
     if err then return nil, err end
 
     local state = copyDamageState(result)
+    if state.isHacked and state.hackExpiresAt > 0 and state.hackExpiresAt <= os.time() then
+        state.isHacked = false
+        state.hackExpiresAt = 0
+        local success, expiryError = awaitResult(function(done)
+            persistWholeState(phoneNumber, state, done)
+        end)
+        if not success then return nil, expiryError end
+    end
     damageByPhone[phoneNumber] = state
+    if state.isHacked and scheduleHackExpiry then scheduleHackExpiry(phoneNumber, state) end
     return copyDamageState(state)
 end
 
@@ -320,7 +419,7 @@ end
 
 local function applyByNumberUnlocked(phoneNumber, level, cause)
     phoneNumber = normalizePhoneNumber(phoneNumber)
-    level = normalizeLevel(level)
+    level = normalizeDamageLevel(level)
     if not phoneNumber then return false, 'invalid_phone_number' end
     if not level then return false, 'invalid_damage_level' end
 
@@ -333,7 +432,9 @@ local function applyByNumberUnlocked(phoneNumber, level, cause)
 
     local state = {
         damageLevel = level,
-        damageSeed = current.damageSeed > 0 and current.damageSeed or math.random(1, 2147483647)
+        damageSeed = current.damageSeed > 0 and current.damageSeed or math.random(1, 2147483647),
+        isHacked = current.isHacked,
+        hackExpiresAt = current.hackExpiresAt
     }
     local success, err = awaitResult(function(done)
         persistDamageState(phoneNumber, state, done)
@@ -349,15 +450,69 @@ end
 local function repairByNumberUnlocked(phoneNumber)
     phoneNumber = normalizePhoneNumber(phoneNumber)
     if not phoneNumber then return false, 'invalid_phone_number' end
-    local success, err = awaitResult(function(done)
-        persistRepair(phoneNumber, done)
-    end)
+    local current, loadError = getCachedDamageUnlocked(phoneNumber)
+    if loadError then return false, loadError end
+    local state = copyDamageState(current)
+    state.damageLevel = 0
+    state.damageSeed = 0
+    local success, err = awaitResult(function(done) persistWholeState(phoneNumber, state, done) end)
     if not success then return false, err end
-
-    local state = { damageLevel = 0, damageSeed = 0 }
     damageByPhone[phoneNumber] = state
     notifyPhoneUsers(phoneNumber, state)
     return true
+end
+
+clearHackUnlocked = function(phoneNumber, current, cause)
+    current = copyDamageState(current)
+    current.isHacked = false
+    current.hackExpiresAt = 0
+    hackTimerTokens[phoneNumber] = (hackTimerTokens[phoneNumber] or 0) + 1
+    local success, err = awaitResult(function(done) persistWholeState(phoneNumber, current, done) end)
+    if not success then
+        scheduleHackExpiry(phoneNumber, current)
+        return false, err
+    end
+    damageByPhone[phoneNumber] = current
+    notifyPhoneUsers(phoneNumber, current)
+    debugLog('Hack removed', phoneNumber, cause or 'unknown')
+    return true, nil, copyDamageState(current)
+end
+
+scheduleHackExpiry = function(phoneNumber, state)
+    hackTimerTokens[phoneNumber] = (hackTimerTokens[phoneNumber] or 0) + 1
+    local token = hackTimerTokens[phoneNumber]
+    if not state.isHacked or state.hackExpiresAt <= 0 then return end
+    local delay = math.max(0, (state.hackExpiresAt - os.time()) * 1000)
+    SetTimeout(delay, function()
+        CreateThread(function()
+            runManaged(function()
+                local current = damageByPhone[phoneNumber]
+                if token ~= hackTimerTokens[phoneNumber] or not current or not current.isHacked then return end
+                if current.hackExpiresAt ~= state.hackExpiresAt or current.hackExpiresAt > os.time() then return end
+                clearHackUnlocked(phoneNumber, current, 'timer_expired')
+            end)
+        end)
+    end)
+end
+
+local function hackByNumberUnlocked(phoneNumber, cause, durationMs)
+    phoneNumber = normalizePhoneNumber(phoneNumber)
+    durationMs = normalizeHackDuration(durationMs)
+    if not phoneNumber then return false, 'invalid_phone_number' end
+    if not durationMs then return false, 'invalid_hack_duration' end
+
+    local current, loadError = getCachedDamageUnlocked(phoneNumber)
+    if loadError then return false, loadError end
+    local state = copyDamageState(current)
+    state.isHacked = true
+    state.hackExpiresAt = durationMs == 0 and 0 or os.time() + math.ceil(durationMs / 1000)
+    local success, err = awaitResult(function(done) persistWholeState(phoneNumber, state, done) end)
+    if not success then return false, err end
+    damageByPhone[phoneNumber] = state
+    scheduleHackExpiry(phoneNumber, state)
+    notifyPhoneUsers(phoneNumber, state)
+    debugLog('Hack applied', phoneNumber, durationMs, cause or 'unknown')
+    return true, nil, copyDamageState(state)
 end
 
 local function escalateByNumberUnlocked(phoneNumber, cause)
@@ -395,7 +550,12 @@ local function applyDamageDeltaByNumberUnlocked(phoneNumber, escalation, maxResu
     return success, applyError, state, success == true and targetLevel > current.damageLevel
 end
 
-local function applyByNumber(phoneNumber, level, cause)
+local function applyByNumber(phoneNumber, level, cause, hackDurationMs)
+    if tonumber(level) == 4 then
+        return runManaged(function()
+            return hackByNumberUnlocked(phoneNumber, cause or 'hack', hackDurationMs)
+        end)
+    end
     return runManaged(function()
         return applyByNumberUnlocked(phoneNumber, level, cause)
     end)
@@ -411,9 +571,9 @@ local function repairHackedByNumber(phoneNumber)
     return runManaged(function()
         local current, err = getCachedDamageUnlocked(phoneNumber)
         if err then return false, err end
-        if current.damageLevel ~= 4 then return false, 'phone_not_hacked', current end
-        local success, repairError = repairByNumberUnlocked(phoneNumber)
-        return success, repairError
+        if not current.isHacked then return false, 'phone_not_hacked', current end
+        local success, clearError = clearHackUnlocked(phoneNumber, current, 'manual_unhack')
+        return success, clearError
     end)
 end
 
@@ -421,7 +581,7 @@ local function isPhoneNumberHacked(phoneNumber)
     return runManaged(function()
         local state, err = getCachedDamageUnlocked(phoneNumber)
         if err then return nil, err end
-        return state.damageLevel == 4, nil, state
+        return state.isHacked, nil, state
     end)
 end
 
@@ -494,6 +654,7 @@ local function hydrateDamageCacheUnlocked(phoneNumbers)
         for i = 1, #missing do
             local phoneNumber = missing[i]
             damageByPhone[phoneNumber] = copyDamageState(fallbackData[phoneNumber])
+            if damageByPhone[phoneNumber].isHacked then scheduleHackExpiry(phoneNumber, damageByPhone[phoneNumber]) end
         end
         return true
     end
@@ -509,7 +670,7 @@ local function hydrateDamageCacheUnlocked(phoneNumbers)
             params[#params + 1] = missing[index]
         end
 
-        local sql = ('SELECT phone_number AS phoneNumber, damage_level AS damageLevel, damage_seed AS damageSeed FROM `%s` WHERE phone_number IN (%s)')
+        local sql = ('SELECT phone_number AS phoneNumber, damage_level AS damageLevel, damage_seed AS damageSeed, is_hacked AS isHacked, hack_expires_at AS hackExpiresAt FROM `%s` WHERE phone_number IN (%s)')
             :format(tableName, table.concat(placeholders, ', '))
         local rows, queryError = awaitResult(function(done)
             query(sql, params, done)
@@ -520,12 +681,13 @@ local function hydrateDamageCacheUnlocked(phoneNumbers)
             local phoneNumber = normalizePhoneNumber(row.phoneNumber)
             if phoneNumber then
                 damageByPhone[phoneNumber] = copyDamageState(row)
+                if damageByPhone[phoneNumber].isHacked then scheduleHackExpiry(phoneNumber, damageByPhone[phoneNumber]) end
                 found[phoneNumber] = true
             end
         end
         for index = first, last do
             local phoneNumber = missing[index]
-            if not found[phoneNumber] then damageByPhone[phoneNumber] = { damageLevel = 0, damageSeed = 0 } end
+            if not found[phoneNumber] then damageByPhone[phoneNumber] = copyDamageState(nil) end
         end
 
         if last < #missing and Config.Persistence.batchDelay > 0 then Wait(Config.Persistence.batchDelay) end
@@ -563,14 +725,16 @@ local function persistBulkDamageUnlocked(changes)
         local params = {}
         for index = first, last do
             local change = changes[index]
-            values[#values + 1] = '(?, ?, ?)'
+            values[#values + 1] = '(?, ?, ?, ?, ?)'
             params[#params + 1] = change.phoneNumber
             params[#params + 1] = change.state.damageLevel
             params[#params + 1] = change.state.damageSeed
+            params[#params + 1] = change.state.isHacked and 1 or 0
+            params[#params + 1] = change.state.hackExpiresAt
         end
 
         local sql = ([=[
-            INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`) VALUES %s
+            INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `is_hacked`, `hack_expires_at`) VALUES %s
             ON DUPLICATE KEY UPDATE
                 `damage_level` = GREATEST(`damage_level`, VALUES(`damage_level`)),
                 `damage_seed` = CASE
@@ -594,6 +758,82 @@ local function persistBulkDamageUnlocked(changes)
     return true, nil, applied
 end
 
+local function persistBulkHackUnlocked(changes)
+    if #changes == 0 then return true, nil, 0 end
+    local ready, databaseError = awaitResult(function(done) ensureDatabase(done) end)
+    if not ready then return false, databaseError or 'database_unavailable', 0 end
+
+    if databaseMode == 'json' then
+        for i = 1, #changes do fallbackData[changes[i].phoneNumber] = copyDamageState(changes[i].state) end
+        if not saveFallbackData() then return false, 'persistence_failed', 0 end
+        for i = 1, #changes do
+            local change = changes[i]
+            damageByPhone[change.phoneNumber] = change.state
+            scheduleHackExpiry(change.phoneNumber, change.state)
+            notifyPhoneUsers(change.phoneNumber, change.state)
+        end
+        return true, nil, #changes
+    end
+
+    local applied = 0
+    for first = 1, #changes, Config.Persistence.batchSize do
+        local last = math.min(first + Config.Persistence.batchSize - 1, #changes)
+        local values, params = {}, {}
+        for index = first, last do
+            local change = changes[index]
+            values[#values + 1] = '(?, ?, ?, ?, ?)'
+            params[#params + 1] = change.phoneNumber
+            params[#params + 1] = change.state.damageLevel
+            params[#params + 1] = change.state.damageSeed
+            params[#params + 1] = 1
+            params[#params + 1] = change.state.hackExpiresAt
+        end
+        local sql = ([=[
+            INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `is_hacked`, `hack_expires_at`) VALUES %s
+            ON DUPLICATE KEY UPDATE
+                `is_hacked` = 1,
+                `hack_expires_at` = VALUES(`hack_expires_at`)
+        ]=]):format(tableName, table.concat(values, ', '))
+        local _, queryError = awaitResult(function(done) query(sql, params, done) end)
+        if queryError then return false, 'database_query_failed', applied end
+        for index = first, last do
+            local change = changes[index]
+            damageByPhone[change.phoneNumber] = change.state
+            scheduleHackExpiry(change.phoneNumber, change.state)
+            notifyPhoneUsers(change.phoneNumber, change.state)
+            applied = applied + 1
+        end
+        if last < #changes and Config.Persistence.batchDelay > 0 then Wait(Config.Persistence.batchDelay) end
+    end
+    return true, nil, applied
+end
+
+local function processBulkHack(sources, cause, durationMs)
+    durationMs = normalizeHackDuration(durationMs)
+    if not durationMs then return false, 'invalid_hack_duration' end
+    return runManaged(function()
+        local phones, summary, collectError = collectBulkPhones(sources)
+        if collectError then return false, collectError, summary end
+        local hydrated, hydrateError = hydrateDamageCacheUnlocked(phones)
+        if not hydrated then return false, hydrateError, summary end
+        local expiresAt = durationMs == 0 and 0 or os.time() + math.ceil(durationMs / 1000)
+        local changes = {}
+        for i = 1, #phones do
+            local phoneNumber = phones[i]
+            local state = copyDamageState(damageByPhone[phoneNumber])
+            state.isHacked = true
+            state.hackExpiresAt = expiresAt
+            changes[#changes + 1] = { phoneNumber = phoneNumber, state = state }
+        end
+        local success, persistError, applied = persistBulkHackUnlocked(changes)
+        summary.changed = applied
+        summary.pending = #changes - applied
+        summary.mode = 'hack'
+        debugLog('Bulk hack', cause or 'unknown', summary.uniquePhones, 'phones', applied, 'changed')
+        return success, persistError, summary
+    end)
+end
+
 local function persistBulkRepairUnlocked(phoneNumbers)
     if #phoneNumbers == 0 then return true, nil, 0 end
 
@@ -603,11 +843,19 @@ local function persistBulkRepairUnlocked(phoneNumbers)
     if not ready then return false, databaseError or 'database_unavailable', 0 end
 
     if databaseMode == 'json' then
-        for i = 1, #phoneNumbers do fallbackData[phoneNumbers[i]] = nil end
+        for i = 1, #phoneNumbers do
+            local phoneNumber = phoneNumbers[i]
+            local state = copyDamageState(damageByPhone[phoneNumber])
+            state.damageLevel = 0
+            state.damageSeed = 0
+            fallbackData[phoneNumber] = state.isHacked and state or nil
+        end
         if not saveFallbackData() then return false, 'persistence_failed', 0 end
         for i = 1, #phoneNumbers do
             local phoneNumber = phoneNumbers[i]
-            local state = { damageLevel = 0, damageSeed = 0 }
+            local state = copyDamageState(damageByPhone[phoneNumber])
+            state.damageLevel = 0
+            state.damageSeed = 0
             damageByPhone[phoneNumber] = state
             notifyPhoneUsers(phoneNumber, state)
         end
@@ -625,15 +873,23 @@ local function persistBulkRepairUnlocked(phoneNumbers)
             params[#params + 1] = phoneNumbers[index]
         end
 
-        local sql = ('DELETE FROM `%s` WHERE phone_number IN (%s)'):format(tableName, table.concat(placeholders, ', '))
-        local _, queryError = awaitResult(function(done)
-            query(sql, params, done)
+        local phoneList = table.concat(placeholders, ', ')
+        local sql = ('UPDATE `%s` SET damage_level = 0, damage_seed = 0 WHERE phone_number IN (%s) AND is_hacked = 1')
+            :format(tableName, phoneList)
+        local _, queryError = awaitResult(function(done) query(sql, params, done) end)
+        if queryError then return false, 'database_query_failed', applied end
+        local deleteSql = ('DELETE FROM `%s` WHERE phone_number IN (%s) AND is_hacked = 0')
+            :format(tableName, phoneList)
+        _, queryError = awaitResult(function(done)
+            query(deleteSql, params, done)
         end)
         if queryError then return false, 'database_query_failed', applied end
 
         for index = first, last do
             local phoneNumber = phoneNumbers[index]
-            local state = { damageLevel = 0, damageSeed = 0 }
+            local state = copyDamageState(damageByPhone[phoneNumber])
+            state.damageLevel = 0
+            state.damageSeed = 0
             damageByPhone[phoneNumber] = state
             notifyPhoneUsers(phoneNumber, state)
             applied = applied + 1
@@ -661,7 +917,9 @@ local function processBulkDamage(sources, level, cause, escalate)
                     phoneNumber = phoneNumber,
                     state = {
                         damageLevel = nextLevel,
-                        damageSeed = current.damageSeed > 0 and current.damageSeed or math.random(1, 2147483647)
+                        damageSeed = current.damageSeed > 0 and current.damageSeed or math.random(1, 2147483647),
+                        isHacked = current.isHacked,
+                        hackExpiresAt = current.hackExpiresAt
                     }
                 }
             else
@@ -679,9 +937,10 @@ local function processBulkDamage(sources, level, cause, escalate)
     end)
 end
 
-local function applyBulkDamage(sources, level, cause)
+local function applyBulkDamage(sources, level, cause, hackDurationMs)
     level = normalizeLevel(level)
     if not level then return false, 'invalid_damage_level' end
+    if level == 4 then return hackBulkPhones(sources, cause or 'hack', hackDurationMs) end
     return processBulkDamage(sources, level, cause, false)
 end
 
@@ -693,6 +952,8 @@ local function repairBulkDamage(sources)
     return runManaged(function()
         local phones, summary, collectError = collectBulkPhones(sources)
         if collectError then return false, collectError, summary end
+        local hydrated, hydrateError = hydrateDamageCacheUnlocked(phones)
+        if not hydrated then return false, hydrateError, summary end
         local success, persistError, applied = persistBulkRepairUnlocked(phones)
         summary.repaired = applied
         summary.pending = #phones - applied
@@ -700,8 +961,8 @@ local function repairBulkDamage(sources)
     end)
 end
 
-local function applyPhoneDamageToAll(level, cause)
-    return applyBulkDamage(GetPlayers(), level, cause or 'all_players')
+local function applyPhoneDamageToAll(level, cause, hackDurationMs)
+    return applyBulkDamage(GetPlayers(), level, cause or 'all_players', hackDurationMs)
 end
 
 local function escalatePhoneDamageForAll(cause)
@@ -712,23 +973,27 @@ local function repairAllPhones()
     return repairBulkDamage(GetPlayers())
 end
 
-local function hackPhone(playerSource, cause)
+local function hackPhone(playerSource, cause, durationMs)
     local phoneNumber = resolveEquippedPhone(playerSource)
     if not phoneNumber then return false, 'no_equipped_phone' end
     setActivePhone(playerSource, phoneNumber)
-    return applyByNumber(phoneNumber, 4, cause or 'hack')
+    return runManaged(function()
+        return hackByNumberUnlocked(phoneNumber, cause or 'hack', durationMs)
+    end)
 end
 
-local function hackPhoneByNumber(phoneNumber, cause)
-    return applyByNumber(phoneNumber, 4, cause or 'hack')
+local function hackPhoneByNumber(phoneNumber, cause, durationMs)
+    return runManaged(function()
+        return hackByNumberUnlocked(phoneNumber, cause or 'hack', durationMs)
+    end)
 end
 
-local function hackBulkPhones(sources, cause)
-    return applyBulkDamage(sources, 4, cause or 'hack')
+hackBulkPhones = function(sources, cause, durationMs)
+    return processBulkHack(sources, cause or 'hack', durationMs)
 end
 
-local function hackAllPhones(cause)
-    return applyPhoneDamageToAll(4, cause or 'hack')
+local function hackAllPhones(cause, durationMs)
+    return hackBulkPhones(GetPlayers(), cause or 'hack', durationMs)
 end
 
 local function normalizeAreaCenter(coords)
@@ -748,7 +1013,7 @@ local function normalizeAreaRadius(radius)
     return radius
 end
 
-local function applyPhoneDamageInArea(coords, radius, level, cause)
+local function applyPhoneDamageInArea(coords, radius, level, cause, hackDurationMs)
     local center = normalizeAreaCenter(coords)
     radius = normalizeAreaRadius(radius)
     local escalate = level == nil
@@ -787,7 +1052,7 @@ local function applyPhoneDamageInArea(coords, radius, level, cause)
     if escalate then
         success, err, summary = escalateBulkDamage(nearbySources, defaultCause)
     else
-        success, err, summary = applyBulkDamage(nearbySources, level, defaultCause)
+        success, err, summary = applyBulkDamage(nearbySources, level, defaultCause, hackDurationMs)
     end
     if summary then
         summary.playersChecked = checked
@@ -802,8 +1067,35 @@ local function escalatePhoneDamageInArea(coords, radius, cause)
     return applyPhoneDamageInArea(coords, radius, nil, cause or 'explosion')
 end
 
-local function hackPhonesInArea(coords, radius, cause)
-    return applyPhoneDamageInArea(coords, radius, 4, cause or 'hack')
+local function hackPhonesInArea(coords, radius, cause, durationMs)
+    local center = normalizeAreaCenter(coords)
+    radius = normalizeAreaRadius(radius)
+    if not center then return false, 'invalid_area_center' end
+    if not radius then return false, 'invalid_area_radius' end
+    local nearbySources, checked = {}, 0
+    local radiusSquared = radius * radius
+    for _, rawSource in ipairs(GetPlayers()) do
+        local playerSource = tonumber(rawSource)
+        local ped = playerSource and GetPlayerPed(playerSource) or 0
+        if ped and ped > 0 then
+            local ok, playerCoords = pcall(GetEntityCoords, ped)
+            if ok and playerCoords then
+                local dx = tonumber(playerCoords.x) - center.x
+                local dy = tonumber(playerCoords.y) - center.y
+                local dz = tonumber(playerCoords.z) - center.z
+                if dx * dx + dy * dy + dz * dz <= radiusSquared then nearbySources[#nearbySources + 1] = playerSource end
+            end
+        end
+        checked = checked + 1
+        if checked % Config.Persistence.resolveYieldEvery == 0 then Wait(0) end
+    end
+    local success, err, summary = hackBulkPhones(nearbySources, cause or 'hack', durationMs)
+    if summary then
+        summary.playersChecked = checked
+        summary.playersInArea = #nearbySources
+        summary.radius = radius
+    end
+    return success, err, summary
 end
 
 local function commandReply(playerSource, message, success)
@@ -894,11 +1186,11 @@ AddEventHandler('playerDropped', function()
     setActivePhone(source, nil)
 end)
 
-exports('ApplyPhoneDamage', function(playerSource, level, cause)
+exports('ApplyPhoneDamage', function(playerSource, level, cause, hackDurationMs)
     local phoneNumber = resolveEquippedPhone(playerSource)
     if not phoneNumber then return false, 'no_equipped_phone' end
     setActivePhone(playerSource, phoneNumber)
-    return applyByNumber(phoneNumber, level, cause)
+    return applyByNumber(phoneNumber, level, cause, hackDurationMs)
 end)
 
 exports('ApplyPhoneDamageByNumber', applyByNumber)
@@ -989,7 +1281,9 @@ if Config.Commands.enabled then
         if playerSource > 0 then setActivePhone(playerSource, equippedPhone) end
         local success, err, result = applyByNumber(phoneNumber, level, 'test_command')
         commandReply(playerSource, success
-            and ('%s is damage level %d (seed %d).'):format(phoneNumber, result.damageLevel, result.damageSeed)
+            and (level == 4
+                and ('Hack activated for %s.'):format(phoneNumber)
+                or ('%s is damage level %d (seed %d).'):format(phoneNumber, result.damageLevel, result.damageSeed))
             or ('Damage failed: %s'):format(err or 'unknown_error'), success)
     end
 
@@ -1012,7 +1306,7 @@ if Config.Commands.enabled then
         if playerSource > 0 then setActivePhone(playerSource, equippedPhone) end
         local success, err = repairByNumber(phoneNumber)
         commandReply(playerSource, success
-            and ('Repaired %s.'):format(phoneNumber)
+            and ('Repaired the display damage on %s.'):format(phoneNumber)
             or ('Repair failed: %s'):format(err or 'unknown_error'), success)
     end
 

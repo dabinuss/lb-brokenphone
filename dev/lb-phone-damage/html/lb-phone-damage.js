@@ -127,7 +127,7 @@
     }
 
     function hackActive() {
-        return Number(lastData.damageLevel) === 4 && lastData.state !== 'closed';
+        return lastData.isHacked === true && lastData.state !== 'closed';
     }
 
     function stopHackSound() {
@@ -168,7 +168,7 @@
                 borderRadius: 'inherit',
                 overflow: 'hidden',
                 filter: 'none',
-                mixBlendMode: 'multiply',
+                mixBlendMode: 'normal',
                 pointerEvents: 'none'
             });
             ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'touchstart', 'touchend', 'wheel', 'contextmenu'].forEach(function (type) {
@@ -194,6 +194,9 @@
             canvas.id = 'lb-phone-damage-canvas';
             Object.assign(canvas.style, {
                 display: 'block',
+                position: 'absolute',
+                inset: '0',
+                zIndex: '4',
                 width: '100%',
                 height: '100%',
                 pointerEvents: 'none'
@@ -405,16 +408,17 @@
         const canvas = overlay.querySelector('#lb-phone-damage-canvas');
         const hackScreen = overlay.querySelector('#lb-phone-damage-hack');
         const hackImage = hackScreen?.querySelector('#lb-phone-damage-hack-image');
-        const rawLevel = Math.max(0, Math.min(4, Number(lastData.damageLevel) || 0));
-        const hacked = rawLevel === 4;
-        const level = Math.min(3, rawLevel);
+        const level = Math.max(0, Math.min(3, Number(lastData.damageLevel) || 0));
+        const hacked = lastData.isHacked === true;
         overlay.style.pointerEvents = touchFaultActive || hacked ? 'auto' : 'none';
         const seed = Number(lastData.damageSeed) || 1;
         const damageColor = lastData.damageColor === 'white' ? 'white' : 'black';
+        const visible = (level > 0 || hacked) && lastData.state !== 'closed';
         overlay.style.filter = 'none';
-        overlay.style.mixBlendMode = hacked ? 'normal' : damageColor === 'white' ? 'screen' : 'multiply';
-        overlay.style.backgroundColor = hacked ? '#101216' : 'transparent';
-        const visible = rawLevel > 0 && lastData.state !== 'closed';
+        overlay.style.mixBlendMode = hacked ? 'normal' : (damageColor === 'white' ? 'screen' : 'multiply');
+        overlay.style.backgroundColor = 'transparent';
+        canvas.style.mixBlendMode = hacked ? (damageColor === 'white' ? 'screen' : 'multiply') : 'normal';
+        
         renderToken += 1;
         if (!visible) {
             hackWasVisible = false;
@@ -437,20 +441,24 @@
         if (hacked) {
             if (!hackWasVisible) playHackSound(true);
             hackWasVisible = true;
-            canvas.style.display = 'none';
             if (hackScreen) hackScreen.style.display = 'flex';
             if (hackImage) {
                 const imageUrl = assetUrl(lastData.hackImage, 'hack/ahahah.gif');
                 if (hackImage.src !== imageUrl) hackImage.src = imageUrl;
             }
+        } else {
+            hackWasVisible = false;
+            if (hackScreen) hackScreen.style.display = 'none';
+            stopHackSound();
+        }
+
+        if (level === 0) {
+            canvas.style.display = 'none';
             overlay.style.display = 'block';
             return;
         }
 
-        hackWasVisible = false;
         canvas.style.display = 'block';
-        if (hackScreen) hackScreen.style.display = 'none';
-        stopHackSound();
 
         const pixelRatio = Math.min(Number(targetWindow && targetWindow.devicePixelRatio) || 1, 2);
         const displayWidth = overlay.parentElement.clientWidth || overlay.clientWidth || 290;

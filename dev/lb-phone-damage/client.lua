@@ -2,6 +2,8 @@ local state = {
     phoneNumber = nil,
     damageLevel = 0,
     damageSeed = 0,
+    isHacked = false,
+    hackExpiresAt = 0,
     damageColor = 'black',
     phoneOpen = false,
     phoneOnScreen = false,
@@ -40,6 +42,8 @@ local function sendNuiUpdate(force)
         state.visualState,
         state.damageLevel,
         state.damageSeed,
+        state.isHacked and 1 or 0,
+        state.hackExpiresAt,
         state.damageColor,
         Config.Hack.image,
         Config.Hack.sound,
@@ -54,7 +58,8 @@ local function sendNuiUpdate(force)
         state = state.visualState,
         damageLevel = state.damageLevel,
         damageSeed = state.damageSeed,
-        isHacked = state.damageLevel == 4,
+        isHacked = state.isHacked,
+        hackExpiresAt = state.hackExpiresAt,
         damageColor = state.damageColor,
         hackImage = Config.Hack.image,
         hackSound = Config.Hack.sound,
@@ -135,19 +140,19 @@ end
 local function updateVisibility()
     transitionToken = transitionToken + 1
     local token = transitionToken
-    local shouldShow = state.phoneOpen and state.phoneOnScreen and state.damageLevel > 0
+    local shouldShow = state.phoneOpen and state.phoneOnScreen and (state.damageLevel > 0 or state.isHacked)
 
     if shouldShow then
         setVisualState('opening')
         SetTimeout(Config.Transition.openDuration, function()
-            if token == transitionToken and state.phoneOpen and state.phoneOnScreen and state.damageLevel > 0 then
+            if token == transitionToken and state.phoneOpen and state.phoneOnScreen and (state.damageLevel > 0 or state.isHacked) then
                 setVisualState('open')
             end
         end)
     elseif state.visualState ~= 'closed' then
         setVisualState('closing')
         SetTimeout(Config.Transition.closeDuration, function()
-            if token == transitionToken and not (state.phoneOpen and state.phoneOnScreen and state.damageLevel > 0) then
+            if token == transitionToken and not (state.phoneOpen and state.phoneOnScreen and (state.damageLevel > 0 or state.isHacked)) then
                 setVisualState('closed')
             end
         end)
@@ -164,6 +169,8 @@ local function setActivePhone(phoneNumber)
     state.phoneNumber = phoneNumber
     state.damageLevel = 0
     state.damageSeed = 0
+    state.isHacked = false
+    state.hackExpiresAt = 0
     updateVisibility()
     TriggerServerEvent('lb-phone-damage:server:syncPhone')
 end
@@ -180,10 +187,12 @@ local function readLbPhoneState()
     setActivePhone(okNumber and number or nil)
 end
 
-RegisterNetEvent('lb-phone-damage:client:receiveDamage', function(phoneNumber, damageLevel, damageSeed)
+RegisterNetEvent('lb-phone-damage:client:receiveDamage', function(phoneNumber, damageLevel, damageSeed, isHacked, hackExpiresAt)
     if phoneNumber ~= state.phoneNumber then return end
-    state.damageLevel = math.max(0, math.min(4, tonumber(damageLevel) or 0))
+    state.damageLevel = math.max(0, math.min(3, tonumber(damageLevel) or 0))
     state.damageSeed = tonumber(damageSeed) or 0
+    state.isHacked = isHacked == true
+    state.hackExpiresAt = state.isHacked and math.max(0, tonumber(hackExpiresAt) or 0) or 0
     updateVisibility()
 end)
 
@@ -232,7 +241,8 @@ exports('GetDamageState', function()
         phoneNumber = state.phoneNumber,
         damageLevel = state.damageLevel,
         damageSeed = state.damageSeed,
-        isHacked = state.damageLevel == 4,
+        isHacked = state.isHacked,
+        hackExpiresAt = state.hackExpiresAt,
         damageColor = state.damageColor,
         phoneOpen = state.phoneOpen,
         phoneOnScreen = state.phoneOnScreen

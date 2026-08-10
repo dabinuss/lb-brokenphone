@@ -6,13 +6,15 @@ Config.Debug = false
 -- Global crack color for every player. Allowed values: 'black' or 'white'.
 Config.DamageColor = 'white'
 
--- Special persistent hack state used by damage level 4. Asset paths are
--- relative to the resource's html directory.
+-- The hack is stored separately from crack damage. Asset paths are relative
+-- to the resource's html directory.
 Config.Hack = {
-    image = 'hack/ahahah.gif', -- Animation shown in the center of the black phone display.
+    image = 'hack/ahahah.gif', -- Animation shown in the center of the blocked phone display.
     sound = 'hack/ahahah.ogg', -- Sound played when the blocked display is clicked.
     soundVolume = 0.65,        -- Playback volume from 0.0 (silent) to 1.0 (full volume).
-    soundCooldown = 300        -- Minimum milliseconds between click sounds.
+    soundCooldown = 300,       -- Minimum milliseconds between click sounds.
+    defaultDuration = 300000,  -- Default hack duration in ms (300000 = 5 minutes, 0 = permanent).
+    maxDuration = 86400000     -- Largest accepted export duration in ms (86400000 = 24 hours).
 }
 
 Config.Database = {
@@ -116,14 +118,14 @@ Config.AutoDamage = {
 Config.Commands = {
     enabled = true,                         -- Register test/admin commands; production exports remain available when false.
     restricted = false,                    -- Require matching ACE permissions for damage and repair commands.
-    setDamage = 'phonedamage',              -- Command used to set damage level 1-3 or special hack level 4.
+    setDamage = 'phonedamage',              -- Command used to set crack level 1-3 or activate the separate hack with 4.
     escalateDamage = 'phoneescalate',       -- Command used to increase damage by exactly one level.
     setDamageAll = 'phonedamageall',        -- ACE-only command that damages every player's currently equipped phone.
     setDamageArea = 'phonedamagearea',      -- ACE-only command that damages equipped phones around the executing player.
     setDamageColor = 'phonedamagecolor',    -- Global color command; always requires command.phonedamagecolor ACE.
-    repair = 'phonerepair',                 -- Command used to remove all damage from a phone.
-    unhack = 'phoneunhack',                 -- Command that repairs only phones currently marked as hacked (level 4).
-    repairAll = 'phonerepairall',           -- ACE-only command that repairs every player's currently equipped phone.
+    repair = 'phonerepair',                 -- Command used to remove physical crack damage while preserving a hack.
+    unhack = 'phoneunhack',                 -- Command that removes only the hack and preserves physical display damage.
+    repairAll = 'phonerepairall',           -- ACE-only command that repairs physical damage on all equipped phones.
     legacySetDamage = 'brokenphone',        -- Backward-compatible damage alias; set to false to disable.
     legacyRepair = 'brokenphonerepair'      -- Backward-compatible repair alias; set to false to disable.
 }
@@ -183,6 +185,10 @@ assert(type(Config.Hack.sound) == 'string' and Config.Hack.sound ~= '',
     'Config.Hack.sound must be a non-empty html-relative path')
 assertNumberRange('Config.Hack.soundVolume', Config.Hack.soundVolume, 0, 1)
 assertInteger('Config.Hack.soundCooldown', Config.Hack.soundCooldown, 0)
+assertInteger('Config.Hack.defaultDuration', Config.Hack.defaultDuration, 0)
+assertInteger('Config.Hack.maxDuration', Config.Hack.maxDuration, 0)
+assert(Config.Hack.defaultDuration <= Config.Hack.maxDuration,
+    'Config.Hack.defaultDuration must not exceed Config.Hack.maxDuration')
 assert(type(Config.Debug) == 'boolean', 'Config.Debug must be true or false')
 assert(type(Config.Database) == 'table', 'Config.Database must be a table')
 assert(type(Config.Database.tableName) == 'string' and Config.Database.tableName:match('^[%w_]+$'),
