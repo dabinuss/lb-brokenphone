@@ -16,7 +16,7 @@ ui_page 'html/index.html'
 files {
     'html/index.html',
     'html/lb-phone-damage.js',
-    'html/cracks/**/*.png',
+    'html/cracks/**/*.webp',
 }
 
 dependency 'lb-phone'

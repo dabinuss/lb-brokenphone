@@ -10,6 +10,7 @@ severe crack.
 
 1. Copy this directory as `lb-phone-damage` into your resources folder.
 2. Ensure `oxmysql`, `lb-phone`, then `lb-phone-damage` in that order.
+   No files inside `lb-phone` need to be copied, patched, or modified.
 3. The SQL table is created automatically. `database.sql` is supplied for manual
    installation. If oxmysql is unavailable, the optional JSON fallback is used.
 4. Test commands are available locally by default and can only mutate the
@@ -20,9 +21,6 @@ severe crack.
    add_ace group.admin command.phonedamage allow
    add_ace group.admin command.phonerepair allow
    ```
-
-The display profile targets LB Phone 2.8.x. Adjust `Config.Display` and
-`Config.Motion` if your LB Phone UI scale or fork differs.
 
 ## Test commands
 
@@ -39,10 +37,12 @@ with a leading slash:
 ```
 
 `/phonedamagecolor 1` uses black cracks (default); mode `2` uses white cracks.
-This visual preference is stored locally for each client.
+The selection is a local player preference stored by the client. It is not part
+of the persistent, phone-number-based damage record.
 
 For compatibility, `/brokenphone` and `/brokenphonerepair` are registered as
-aliases with the same ACE restriction.
+aliases. When command restrictions are enabled, each alias only grants access
+to its matching damage or repair operation.
 
 Without a number, the server resolves the player's actually equipped LB Phone.
 These commands call the same production functions as external integrations.

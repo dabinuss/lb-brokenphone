@@ -49,9 +49,7 @@ local function sendNuiUpdate()
         state = state.visualState,
         damageLevel = state.damageLevel,
         damageSeed = state.damageSeed,
-        damageColor = state.damageColor,
-        display = Config.Display,
-        motion = Config.Motion
+        damageColor = state.damageColor
     })
 end
 
@@ -127,14 +125,14 @@ local function updateVisibility()
 
     if shouldShow then
         setVisualState('opening')
-        SetTimeout(Config.Motion.openDuration, function()
+        SetTimeout(Config.Transition.openDuration, function()
             if token == transitionToken and state.phoneOpen and state.phoneOnScreen and state.damageLevel > 0 then
                 setVisualState('open')
             end
         end)
     elseif state.visualState ~= 'closed' then
         setVisualState('closing')
-        SetTimeout(Config.Motion.closeDuration, function()
+        SetTimeout(Config.Transition.closeDuration, function()
             if token == transitionToken and not (state.phoneOpen and state.phoneOnScreen and state.damageLevel > 0) then
                 setVisualState('closed')
             end

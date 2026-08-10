@@ -49,13 +49,23 @@ local function finishDatabaseStart(mode)
     databaseMode = mode
     databaseReady = true
     databaseStarting = false
-    for i = 1, #databaseWaiters do databaseWaiters[i]() end
+    local waiters = databaseWaiters
     databaseWaiters = {}
+    for i = 1, #waiters do waiters[i](true) end
     print(('[lb-phone-damage] Persistence ready (%s).'):format(mode))
 end
 
+local function failDatabaseStart(err)
+    databaseStarting = false
+    local message = tostring(err or 'database_initialization_failed')
+    print(('^1[lb-phone-damage] Persistence initialization failed: %s^7'):format(message))
+    local waiters = databaseWaiters
+    databaseWaiters = {}
+    for i = 1, #waiters do waiters[i](false, message) end
+end
+
 local function ensureDatabase(callback)
-    if databaseReady then return callback() end
+    if databaseReady then return callback(true) end
     databaseWaiters[#databaseWaiters + 1] = callback
     if databaseStarting then return end
     databaseStarting = true
@@ -70,14 +80,20 @@ local function ensureDatabase(callback)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ]=]):format(tableName)
 
-        exports.oxmysql:query(sql, {}, function()
-            finishDatabaseStart('oxmysql')
+        local invoked, invokeError = pcall(function()
+            exports.oxmysql.query(nil, sql, {}, function(result, err)
+                if err or result == nil then
+                    return failDatabaseStart(err or 'database_initialization_failed')
+                end
+                finishDatabaseStart('oxmysql')
+            end, GetCurrentResourceName(), true)
         end)
+        if not invoked then failDatabaseStart(invokeError) end
         return
     end
 
     if not Config.Database.allowJsonFallback then
-        error('oxmysql is not started and JSON fallback is disabled')
+        return failDatabaseStart('oxmysql_not_started')
     end
 
     loadFallbackData()
@@ -85,14 +101,18 @@ local function ensureDatabase(callback)
 end
 
 local function query(sql, params, callback)
-    exports.oxmysql:query(sql, params or {}, callback)
+    local invoked, invokeError = pcall(function()
+        exports.oxmysql.query(nil, sql, params or {}, callback, GetCurrentResourceName(), true)
+    end)
+    if not invoked then callback(nil, tostring(invokeError)) end
 end
 
 local function getDamage(phoneNumber, callback)
     phoneNumber = normalizePhoneNumber(phoneNumber)
     if not phoneNumber then return callback(nil, 'invalid_phone_number') end
 
-    ensureDatabase(function()
+    ensureDatabase(function(ready, databaseError)
+        if not ready then return callback(nil, databaseError or 'database_unavailable') end
         if databaseMode == 'json' then
             local row = fallbackData[phoneNumber]
             if not row then return callback(nil) end
@@ -102,7 +122,8 @@ local function getDamage(phoneNumber, callback)
             })
         end
 
-        query(('SELECT damage_level AS damageLevel, damage_seed AS damageSeed FROM `%s` WHERE phone_number = ? LIMIT 1'):format(tableName), { phoneNumber }, function(rows)
+        query(('SELECT damage_level AS damageLevel, damage_seed AS damageSeed FROM `%s` WHERE phone_number = ? LIMIT 1'):format(tableName), { phoneNumber }, function(rows, err)
+            if err then return callback(nil, 'database_query_failed') end
             local row = rows and rows[1]
             if not row then return callback(nil) end
             callback({ damageLevel = tonumber(row.damageLevel) or 0, damageSeed = tonumber(row.damageSeed) or 0 })
@@ -117,7 +138,8 @@ local function applyDamage(phoneNumber, level, cause, callback)
     if not level then return callback(false, 'invalid_damage_level') end
 
     local seed = math.random(1, 2147483647)
-    ensureDatabase(function()
+    ensureDatabase(function(ready, databaseError)
+        if not ready then return callback(false, databaseError or 'database_unavailable') end
         if databaseMode == 'json' then
             local current = fallbackData[phoneNumber]
             if not current then
@@ -137,9 +159,11 @@ local function applyDamage(phoneNumber, level, cause, callback)
             ON DUPLICATE KEY UPDATE
                 `damage_level` = GREATEST(`damage_level`, VALUES(`damage_level`))
         ]=]):format(tableName)
-        query(sql, { phoneNumber, level, seed }, function()
+        query(sql, { phoneNumber, level, seed }, function(_, err)
+            if err then return callback(false, 'database_query_failed') end
             debugLog('Damage applied', phoneNumber, level, cause or 'unknown')
-            getDamage(phoneNumber, function(result)
+            getDamage(phoneNumber, function(result, getError)
+                if getError then return callback(false, getError) end
                 callback(true, nil, result)
             end)
         end)
@@ -150,14 +174,16 @@ local function repairDamage(phoneNumber, callback)
     phoneNumber = normalizePhoneNumber(phoneNumber)
     if not phoneNumber then return callback(false, 'invalid_phone_number') end
 
-    ensureDatabase(function()
+    ensureDatabase(function(ready, databaseError)
+        if not ready then return callback(false, databaseError or 'database_unavailable') end
         if databaseMode == 'json' then
             fallbackData[phoneNumber] = nil
             if not saveFallbackData() then return callback(false, 'persistence_failed') end
             return callback(true)
         end
 
-        query(('DELETE FROM `%s` WHERE phone_number = ?'):format(tableName), { phoneNumber }, function()
+        query(('DELETE FROM `%s` WHERE phone_number = ?'):format(tableName), { phoneNumber }, function(_, err)
+            if err then return callback(false, 'database_query_failed') end
             callback(true)
         end)
     end)
@@ -244,18 +270,23 @@ local function commandReply(playerSource, message, success)
     end
 end
 
-local function hasTestCommandPermission(playerSource)
+local function hasDamagePermission(playerSource)
     if playerSource == 0 then return true end
     if not Config.Commands.restricted then return true end
     return IsPlayerAceAllowed(playerSource, ('command.%s'):format(Config.Commands.setDamage))
-        or IsPlayerAceAllowed(playerSource, ('command.%s'):format(Config.Commands.repair))
         or (Config.Commands.legacySetDamage and IsPlayerAceAllowed(playerSource, ('command.%s'):format(Config.Commands.legacySetDamage)))
+end
+
+local function hasRepairPermission(playerSource)
+    if playerSource == 0 then return true end
+    if not Config.Commands.restricted then return true end
+    return IsPlayerAceAllowed(playerSource, ('command.%s'):format(Config.Commands.repair))
         or (Config.Commands.legacyRepair and IsPlayerAceAllowed(playerSource, ('command.%s'):format(Config.Commands.legacyRepair)))
 end
 
 RegisterNetEvent('lb-phone-damage:server:testDamage', function(level, requestedPhoneNumber)
     local playerSource = source
-    if not hasTestCommandPermission(playerSource) then
+    if not hasDamagePermission(playerSource) then
         return commandReply(playerSource, 'You do not have permission to use this command.', false)
     end
 
@@ -278,7 +309,7 @@ end)
 
 RegisterNetEvent('lb-phone-damage:server:testRepair', function(requestedPhoneNumber)
     local playerSource = source
-    if not hasTestCommandPermission(playerSource) then
+    if not hasRepairPermission(playerSource) then
         return commandReply(playerSource, 'You do not have permission to use this command.', false)
     end
 

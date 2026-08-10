@@ -5,25 +5,31 @@
     const assetRoot = window.LB_PHONE_DAMAGE_ASSET_ROOT || 'https://cfx-nui-lb-phone-damage/html/';
     const cracks = {
         1: [
-            'cracks/light/30664a61-4b38-4699-8354-e49c414f6f77.png',
-            'cracks/light/33e64ce2-89d6-4707-bd04-3c12c7c6abad.png',
-            'cracks/light/48af7dc8-8c95-42cd-9f06-29262d1c7358.png',
-            'cracks/light/68b11a02-864e-4816-8e7f-c879eb1f6efe.png',
-            'cracks/light/cefd428e-3d70-489a-9b72-5466cf2d9e6b.png',
-            'cracks/light/f715b39b-13ad-4aed-a157-7b5402bce46d.png',
-            'cracks/light/k0dc0kvq038c02q89jnvia6qw48vql1z.png'
+            'cracks/light/cracklight1.webp',
+            'cracks/light/cracklight2.webp',
+            'cracks/light/cracklight3.webp',
+            'cracks/light/cracklight4.webp',
+            'cracks/light/cracklight5.webp',
+            'cracks/light/cracklight6.webp',
+            'cracks/light/cracklight7.webp'
         ],
         2: [
-            'cracks/medium/957b5d53-68eb-4834-9f6d-e3c22f0c2401.png',
-            'cracks/medium/chatgpt-2026-08-09-171434.png',
-            'cracks/medium/fbf49129-df44-474c-9736-78047324d523.png'
+            'cracks/medium/crackmedium1.webp',
+            'cracks/medium/crackmedium2.webp',
+            'cracks/medium/crackmedium3.webp',
+            'cracks/medium/crackmedium4.webp',
+            'cracks/medium/crackmedium5.webp',
+            'cracks/medium/crackmedium6.webp',
+            'cracks/medium/crackmedium7.webp'
         ],
         3: [
-            'cracks/severe/150ee003-5f6a-4597-94b8-97d6a0469e41.png',
-            'cracks/severe/25855c00-68e7-43d6-95f1-bab50a3a313f.png',
-            'cracks/severe/4b6f78c3-9b59-41a8-9971-aede42f4c1ca.png',
-            'cracks/severe/5f5d6a46-68fc-465f-a7cc-bf3f4d61b740.png',
-            'cracks/severe/6a2fc772-2ce8-4ed9-84ac-35d3bafa663e.png'
+            'cracks/severe/cracksevere1.webp',
+            'cracks/severe/cracksevere2.webp',
+            'cracks/severe/cracksevere3.webp',
+            'cracks/severe/cracksevere4.webp',
+            'cracks/severe/cracksevere5.webp',
+            'cracks/severe/cracksevere6.webp',
+            'cracks/severe/cracksevere7.webp'
         ]
     };
     const orientations = [
@@ -47,6 +53,8 @@
     let targetDocument = null;
     let observedDocument = null;
     let targetObserver = null;
+    let renderFrame = null;
+    let connectTimer = null;
     const imageCache = new Map();
     const reportedLoadErrors = new Set();
 
@@ -81,48 +89,6 @@
         return ((value ^ (value >>> 16)) >>> 0) / 4294967296;
     }
 
-    function ensureCrackFilter() {
-        if (targetDocument.getElementById(crackFilterId)) return;
-
-        const namespace = 'http://www.w3.org/2000/svg';
-        const svg = targetDocument.createElementNS(namespace, 'svg');
-        Object.assign(svg.style, {
-            position: 'absolute',
-            width: '0',
-            height: '0',
-            pointerEvents: 'none'
-        });
-        svg.setAttribute('aria-hidden', 'true');
-
-        const filter = targetDocument.createElementNS(namespace, 'filter');
-        filter.id = crackFilterId;
-        filter.setAttribute('color-interpolation-filters', 'sRGB');
-
-        const normalizeWhite = targetDocument.createElementNS(namespace, 'feComponentTransfer');
-        normalizeWhite.setAttribute('result', 'normalized-white');
-        const deepenCracks = targetDocument.createElementNS(namespace, 'feComponentTransfer');
-        deepenCracks.setAttribute('in', 'normalized-white');
-
-        for (const channel of ['R', 'G', 'B']) {
-            const normalize = targetDocument.createElementNS(namespace, `feFunc${channel}`);
-            normalize.setAttribute('type', 'linear');
-            normalize.setAttribute('slope', '1.02');
-            normalizeWhite.appendChild(normalize);
-
-            const deepen = targetDocument.createElementNS(namespace, `feFunc${channel}`);
-            deepen.setAttribute('type', 'gamma');
-            deepen.setAttribute('amplitude', '1');
-            deepen.setAttribute('exponent', '3');
-            deepen.setAttribute('offset', '0');
-            deepenCracks.appendChild(deepen);
-        }
-
-        filter.appendChild(normalizeWhite);
-        filter.appendChild(deepenCracks);
-        svg.appendChild(filter);
-        targetDocument.documentElement.appendChild(svg);
-    }
-
     function loadCrackImage(path) {
         const url = `${assetRoot}${path}`;
         if (!imageCache.has(url)) {
@@ -140,8 +106,6 @@
         if (!targetDocument && !resolveLbPhoneTarget()) return null;
         const phone = targetDocument.querySelector('.phone-container');
         if (!phone) return null;
-        ensureCrackFilter();
-
         let overlay = targetDocument.getElementById('lb-phone-damage-overlay');
         if (overlay && overlay.parentElement !== phone) overlay.remove();
         if (!overlay || !overlay.isConnected) {
@@ -187,7 +151,7 @@
         return overlay;
     }
 
-    async function composeDamage(canvas, level, seed, damageColor, token) {
+    async function composeDamage(canvas, level, seed, damageColor, token, width, height) {
         const phases = [];
         for (let phase = 1; phase <= level; phase += 1) {
             if (!cracks[phase]) continue;
@@ -209,9 +173,6 @@
 
         if (token !== renderToken || !canvas.isConnected) return;
         const overlay = canvas.parentElement;
-        const pixelRatio = Math.min(Number(targetWindow && targetWindow.devicePixelRatio) || 1, 2);
-        const width = Math.max(1, Math.round((overlay.clientWidth || 290) * pixelRatio));
-        const height = Math.max(1, Math.round((overlay.clientHeight || 585) * pixelRatio));
         if (canvas.width !== width) canvas.width = width;
         if (canvas.height !== height) canvas.height = height;
 
@@ -254,6 +215,8 @@
         canvas.dataset.damageLevel = String(level);
         canvas.dataset.damageSeed = String(seed);
         canvas.dataset.damageColor = String(damageColor);
+        canvas.dataset.width = String(width);
+        canvas.dataset.height = String(height);
         canvas.dataset.transforms = JSON.stringify(phases.map(function (phase) {
             return [phase.phase, phase.x, phase.y, phase.rotation, phase.scale, phase.scaleX, phase.scaleY];
         }));
@@ -280,21 +243,53 @@
             canvas.dataset.damageLevel = '0';
             canvas.dataset.damageSeed = '0';
             canvas.dataset.damageColor = String(damageColor);
+            canvas.dataset.width = '0';
+            canvas.dataset.height = '0';
             canvas.dataset.transforms = '[]';
             return;
         }
 
+        const pixelRatio = Math.min(Number(targetWindow && targetWindow.devicePixelRatio) || 1, 2);
+        const displayWidth = overlay.parentElement.clientWidth || overlay.clientWidth || 290;
+        const displayHeight = overlay.parentElement.clientHeight || overlay.clientHeight || 585;
+        const width = Math.max(1, Math.round(displayWidth * pixelRatio));
+        const height = Math.max(1, Math.round(displayHeight * pixelRatio));
         const renderedLevel = Number(canvas.dataset.damageLevel) || 0;
         const renderedSeed = Number(canvas.dataset.damageSeed) || 0;
         const renderedColor = Number(canvas.dataset.damageColor) || 1;
-        const frameIsCompatible = renderedSeed === seed && renderedColor === damageColor && renderedLevel > 0 && renderedLevel <= level;
+        const renderedWidth = Number(canvas.dataset.width) || 0;
+        const renderedHeight = Number(canvas.dataset.height) || 0;
+        const exactMatch = renderedLevel === level
+            && renderedSeed === seed
+            && renderedColor === damageColor
+            && renderedWidth === width
+            && renderedHeight === height;
+        if (exactMatch) {
+            overlay.style.display = 'block';
+            return;
+        }
+
+        const frameIsCompatible = renderedSeed === seed
+            && renderedColor === damageColor
+            && renderedWidth === width
+            && renderedHeight === height
+            && renderedLevel > 0
+            && renderedLevel <= level;
         overlay.style.display = frameIsCompatible ? 'block' : 'none';
         const token = renderToken;
-        composeDamage(canvas, level, seed, damageColor, token).catch(function (error) {
+        composeDamage(canvas, level, seed, damageColor, token, width, height).catch(function (error) {
             const message = error instanceof Error ? error.message : String(error);
             if (reportedLoadErrors.has(message)) return;
             reportedLoadErrors.add(message);
             console.warn('[lb-phone-damage]', message);
+        });
+    }
+
+    function scheduleRender() {
+        if (renderFrame !== null) return;
+        renderFrame = window.requestAnimationFrame(function () {
+            renderFrame = null;
+            render();
         });
     }
 
@@ -322,12 +317,35 @@
 
         if (targetObserver) targetObserver.disconnect();
         observedDocument = targetDocument;
-        targetObserver = new MutationObserver(render);
+        targetObserver = new MutationObserver(scheduleRender);
         targetObserver.observe(targetDocument.documentElement, { childList: true, subtree: true });
         console.log('[lb-phone-damage][external] connected to lb-phone DOM');
-        render();
+        scheduleRender();
+    }
+
+    function cleanup() {
+        renderToken += 1;
+        if (renderFrame !== null) window.cancelAnimationFrame(renderFrame);
+        renderFrame = null;
+        if (connectTimer !== null) window.clearInterval(connectTimer);
+        connectTimer = null;
+        if (targetObserver) targetObserver.disconnect();
+        targetObserver = null;
+
+        const documents = new Set([targetDocument, observedDocument]);
+        documents.forEach(function (documentToClean) {
+            if (!documentToClean) return;
+            documentToClean.getElementById('lb-phone-damage-overlay')?.remove();
+            documentToClean.getElementById(crackFilterId)?.remove();
+        });
+
+        observedDocument = null;
+        targetDocument = null;
+        targetWindow = null;
     }
 
     connectRenderer();
-    window.setInterval(connectRenderer, 1000);
+    connectTimer = window.setInterval(connectRenderer, 1000);
+    window.addEventListener('pagehide', cleanup);
+    window.addEventListener('beforeunload', cleanup);
 })();
