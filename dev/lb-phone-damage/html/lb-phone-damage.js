@@ -200,7 +200,7 @@
             const orientation = orientations[Math.floor(values[4] * orientations.length)];
             phases.push({
                 phase,
-                image: await loadCrackImage(variant),
+                variant,
                 x: values[1] * 8 - 4,
                 y: values[2] * 8 - 4,
                 rotation: orientation.rotate + values[3] * 8 - 4,
@@ -209,6 +209,13 @@
                 scaleY: orientation.scaleY
             });
         }
+
+        const images = await Promise.all(phases.map(function (phase) {
+            return loadCrackImage(phase.variant);
+        }));
+        phases.forEach(function (phase, index) {
+            phase.image = images[index];
+        });
 
         if (token !== renderToken || !canvas.isConnected) return;
         const overlay = canvas.parentElement;
@@ -363,7 +370,6 @@
         observedDocument = targetDocument;
         phoneHostObserver = new MutationObserver(checkPhoneContainer);
         phoneHostObserver.observe(targetDocument.documentElement, { childList: true, subtree: true });
-        console.log('[lb-phone-damage][external] connected to lb-phone DOM');
         checkPhoneContainer();
     }
 

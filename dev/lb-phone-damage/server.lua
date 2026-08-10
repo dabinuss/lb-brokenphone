@@ -210,7 +210,14 @@ local function resolveEquippedPhone(playerSource)
 end
 
 local function sendDamage(playerSource, phoneNumber)
-    getDamage(phoneNumber, function(result)
+    getDamage(phoneNumber, function(result, err)
+        if err then
+            print(('^1[lb-phone-damage] Failed to load damage for %s: %s^7'):format(
+                tostring(phoneNumber), tostring(err)
+            ))
+            return
+        end
+
         TriggerClientEvent(
             'lb-phone-damage:client:receiveDamage',
             playerSource,
@@ -300,50 +307,6 @@ local function hasDamageColorPermission(playerSource)
     return IsPlayerAceAllowed(playerSource, ('command.%s'):format(Config.Commands.setDamageColor))
 end
 
-RegisterNetEvent('lb-phone-damage:server:testDamage', function(level, requestedPhoneNumber)
-    local playerSource = source
-    if not hasDamagePermission(playerSource) then
-        return commandReply(playerSource, 'You do not have permission to use this command.', false)
-    end
-
-    level = normalizeLevel(level)
-    local equippedPhone = resolveEquippedPhone(playerSource)
-    local requestedPhone = normalizePhoneNumber(requestedPhoneNumber)
-    if not Config.Commands.restricted and requestedPhone and requestedPhone ~= equippedPhone then
-        return commandReply(playerSource, 'You can only test the phone you currently have equipped.', false)
-    end
-    local phoneNumber = requestedPhone or equippedPhone
-    if not level then return commandReply(playerSource, 'Damage level must be 1, 2, or 3.', false) end
-    if not phoneNumber then return commandReply(playerSource, 'No equipped phone found.', false) end
-
-    activePhoneBySource[playerSource] = resolveEquippedPhone(playerSource)
-    local success, err, result = applyByNumber(phoneNumber, level, 'test_command')
-    commandReply(playerSource, success
-        and ('%s is damage level %d (seed %d).'):format(phoneNumber, result.damageLevel, result.damageSeed)
-        or ('Damage failed: %s'):format(err or 'unknown_error'), success)
-end)
-
-RegisterNetEvent('lb-phone-damage:server:testRepair', function(requestedPhoneNumber)
-    local playerSource = source
-    if not hasRepairPermission(playerSource) then
-        return commandReply(playerSource, 'You do not have permission to use this command.', false)
-    end
-
-    local equippedPhone = resolveEquippedPhone(playerSource)
-    local requestedPhone = normalizePhoneNumber(requestedPhoneNumber)
-    if not Config.Commands.restricted and requestedPhone and requestedPhone ~= equippedPhone then
-        return commandReply(playerSource, 'You can only repair the phone you currently have equipped.', false)
-    end
-    local phoneNumber = requestedPhone or equippedPhone
-    if not phoneNumber then return commandReply(playerSource, 'No equipped phone found.', false) end
-
-    activePhoneBySource[playerSource] = resolveEquippedPhone(playerSource)
-    local success, err = repairByNumber(phoneNumber)
-    commandReply(playerSource, success
-        and ('Repaired %s.'):format(phoneNumber)
-        or ('Repair failed: %s'):format(err or 'unknown_error'), success)
-end)
-
 RegisterNetEvent('lb-phone-damage:server:syncPhone', function()
     local playerSource = source
     sendDamageColor(playerSource)
@@ -401,18 +364,28 @@ exports('RepairPhoneByNumber', repairByNumber)
 
 if Config.Commands.enabled then
     local function damageCommand(playerSource, args)
+        if not hasDamagePermission(playerSource) then
+            return commandReply(playerSource, 'You do not have permission to use this command.', false)
+        end
+
         local level = normalizeLevel(args[1])
-        local phoneNumber = normalizePhoneNumber(args[2])
         if not level then
             commandReply(playerSource, ('Usage: /%s <1-3> [phoneNumber]'):format(Config.Commands.setDamage), false)
             return
         end
-        if not phoneNumber then phoneNumber = resolveEquippedPhone(playerSource) end
+
+        local equippedPhone = resolveEquippedPhone(playerSource)
+        local requestedPhone = normalizePhoneNumber(args[2])
+        if playerSource > 0 and not Config.Commands.restricted and requestedPhone and requestedPhone ~= equippedPhone then
+            return commandReply(playerSource, 'You can only test the phone you currently have equipped.', false)
+        end
+        local phoneNumber = requestedPhone or equippedPhone
         if not phoneNumber then
             commandReply(playerSource, 'No equipped phone; console usage requires a phone number.', false)
             return
         end
 
+        if playerSource > 0 then activePhoneBySource[playerSource] = equippedPhone end
         local success, err, result = applyByNumber(phoneNumber, level, 'test_command')
         commandReply(playerSource, success
             and ('%s is damage level %d (seed %d).'):format(phoneNumber, result.damageLevel, result.damageSeed)
@@ -420,11 +393,22 @@ if Config.Commands.enabled then
     end
 
     local function repairCommand(playerSource, args)
-        local phoneNumber = normalizePhoneNumber(args[1]) or resolveEquippedPhone(playerSource)
+        if not hasRepairPermission(playerSource) then
+            return commandReply(playerSource, 'You do not have permission to use this command.', false)
+        end
+
+        local equippedPhone = resolveEquippedPhone(playerSource)
+        local requestedPhone = normalizePhoneNumber(args[1])
+        if playerSource > 0 and not Config.Commands.restricted and requestedPhone and requestedPhone ~= equippedPhone then
+            return commandReply(playerSource, 'You can only repair the phone you currently have equipped.', false)
+        end
+        local phoneNumber = requestedPhone or equippedPhone
         if not phoneNumber then
             commandReply(playerSource, ('Usage: /%s [phoneNumber]'):format(Config.Commands.repair), false)
             return
         end
+
+        if playerSource > 0 then activePhoneBySource[playerSource] = equippedPhone end
         local success, err = repairByNumber(phoneNumber)
         commandReply(playerSource, success
             and ('Repaired %s.'):format(phoneNumber)
@@ -446,15 +430,15 @@ if Config.Commands.enabled then
         commandReply(playerSource, ('Global crack color set to %s.'):format(damageColor), true)
     end
 
-    RegisterCommand(Config.Commands.setDamage, damageCommand, Config.Commands.restricted)
+    RegisterCommand(Config.Commands.setDamage, damageCommand, false)
     RegisterCommand(Config.Commands.setDamageColor, damageColorCommand, false)
-    RegisterCommand(Config.Commands.repair, repairCommand, Config.Commands.restricted)
+    RegisterCommand(Config.Commands.repair, repairCommand, false)
 
     if Config.Commands.legacySetDamage and Config.Commands.legacySetDamage ~= Config.Commands.setDamage then
-        RegisterCommand(Config.Commands.legacySetDamage, damageCommand, Config.Commands.restricted)
+        RegisterCommand(Config.Commands.legacySetDamage, damageCommand, false)
     end
     if Config.Commands.legacyRepair and Config.Commands.legacyRepair ~= Config.Commands.repair then
-        RegisterCommand(Config.Commands.legacyRepair, repairCommand, Config.Commands.restricted)
+        RegisterCommand(Config.Commands.legacyRepair, repairCommand, false)
     end
 end
 

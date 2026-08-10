@@ -11,6 +11,8 @@ local state = {
 local transitionToken = 0
 local touchToken = 0
 local touchFaultActive = false
+local lastNuiStateKey = nil
+
 local function normalizeDamageColor(value)
     return value == 'white' and 'white' or 'black'
 end
@@ -19,10 +21,6 @@ local function debugLog(message)
     if Config.Debug then
         print(('^3[lb-phone-damage]^7 %s'):format(tostring(message)))
     end
-end
-
-local function commandLog(message)
-    print(('^3[lb-phone-damage]^7 %s'):format(tostring(message)))
 end
 
 local function lbExport(name, ...)
@@ -37,7 +35,16 @@ local function lbExport(name, ...)
     end)
 end
 
-local function sendNuiUpdate()
+local function sendNuiUpdate(force)
+    local stateKey = table.concat({
+        state.visualState,
+        state.damageLevel,
+        state.damageSeed,
+        state.damageColor
+    }, ':')
+    if not force and stateKey == lastNuiStateKey then return end
+    lastNuiStateKey = stateKey
+
     SendNUIMessage({
         action = 'lb-phone-damage:update',
         state = state.visualState,
@@ -48,7 +55,7 @@ local function sendNuiUpdate()
 end
 
 RegisterNUICallback('ready', function(_, callback)
-    sendNuiUpdate()
+    sendNuiUpdate(true)
     callback({ ok = true })
 end)
 
@@ -158,7 +165,6 @@ local function readLbPhoneState()
     state.phoneOpen = okOpen and isOpen == true
     state.phoneOnScreen = okScreen and onScreen == true
     setActivePhone(okNumber and number or nil)
-    updateVisibility()
 end
 
 RegisterNetEvent('lb-phone-damage:client:receiveDamage', function(phoneNumber, damageLevel, damageSeed)
@@ -193,30 +199,6 @@ RegisterNetEvent('lb-phone:setOnScreen', function(onScreen)
     state.phoneOnScreen = onScreen == true
     updateVisibility()
 end)
-
-local function damageCommand(_, args)
-    local level = tonumber(args[1])
-    if not level or level % 1 ~= 0 or level < 1 or level > 3 then
-        commandLog(('Usage: %s <1-3> [phoneNumber]'):format(Config.Commands.setDamage))
-        return
-    end
-    TriggerServerEvent('lb-phone-damage:server:testDamage', level, args[2])
-end
-
-local function repairCommand(_, args)
-    TriggerServerEvent('lb-phone-damage:server:testRepair', args[1])
-end
-
-if Config.Commands.enabled then
-    RegisterCommand(Config.Commands.setDamage, damageCommand, false)
-    RegisterCommand(Config.Commands.repair, repairCommand, false)
-    if Config.Commands.legacySetDamage and Config.Commands.legacySetDamage ~= Config.Commands.setDamage then
-        RegisterCommand(Config.Commands.legacySetDamage, damageCommand, false)
-    end
-    if Config.Commands.legacyRepair and Config.Commands.legacyRepair ~= Config.Commands.repair then
-        RegisterCommand(Config.Commands.legacyRepair, repairCommand, false)
-    end
-end
 
 AddEventHandler('onClientResourceStart', function(resourceName)
     if resourceName ~= GetCurrentResourceName() and resourceName ~= 'lb-phone' then return end

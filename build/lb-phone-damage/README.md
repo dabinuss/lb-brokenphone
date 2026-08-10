@@ -13,8 +13,8 @@ severe crack.
    No files inside `lb-phone` need to be copied, patched, or modified.
 3. The SQL table is created automatically. `database.sql` is supplied for manual
    installation. If oxmysql is unavailable, the optional JSON fallback is used.
-4. Test commands are available locally by default and can only mutate the
-   player's equipped phone. To restrict them to administrators, set
+4. Damage and repair test commands are available to players by default and can
+   only mutate the player's equipped phone. To restrict them to administrators, set
    `Config.Commands.restricted = true` and grant ACE access:
 
    ```cfg
@@ -31,7 +31,7 @@ severe crack.
 Set the server-wide crack color in `config.lua`:
 
 ```lua
-Config.DamageColor = 'black' -- 'black' or 'white'
+Config.DamageColor = 'white' -- 'black' or 'white'
 ```
 
 This value is the authoritative default for every player. It is not stored in
@@ -39,9 +39,8 @@ client KVP or in the phone damage database.
 
 ## Test commands
 
-Run the damage and repair test commands locally in the FiveM F8 console
-(without a leading slash), or in chat with a leading slash. The global color
-command is available through chat or the server console:
+All commands are registered server-side. Run them in chat with a leading slash,
+or in the server console without one:
 
 ```text
 /phonedamage 1 [phoneNumber]
