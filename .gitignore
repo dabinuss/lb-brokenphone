@@ -5,6 +5,7 @@ dev/web/dist/
 dist/
 .npm/
 lbphone_search.txt
+SIBLING-NUI.md
 
 # Agent / AI / IDE generated files (GPT, Gemini, Claude, etc.)
 .gemini/

@@ -35,8 +35,12 @@
     const layerCounts = { 1: 3, 2: 2, 3: 1 };
     const crackFilterId = 'lb-phone-damage-levels';
     const phaseSeedStep = 1000003;
+    const crackLevels = Uint8Array.from({ length: 256 }, function (_, value) {
+        const normalized = Math.min(255, value * 1.02) / 255;
+        return Math.round(normalized * normalized * normalized * 255);
+    });
 
-    let lastData = { damageLevel: 0, damageSeed: 0, state: 'closed' };
+    let lastData = { damageLevel: 0, damageSeed: 0, damageColor: 1, state: 'closed' };
     let touchFaultActive = false;
     let renderToken = 0;
     let targetWindow = null;
@@ -149,7 +153,7 @@
                 zIndex: '2147483646',
                 borderRadius: 'inherit',
                 overflow: 'hidden',
-                filter: `url(#${crackFilterId})`,
+                filter: 'none',
                 mixBlendMode: 'multiply',
                 pointerEvents: 'none'
             });
@@ -163,6 +167,9 @@
             phone.appendChild(overlay);
         }
 
+        // Re-apply geometry when adopting an overlay left behind by a resource restart.
+        overlay.style.borderRadius = 'inherit';
+        overlay.style.overflow = 'hidden';
         overlay.style.backgroundImage = 'none';
         let canvas = overlay.querySelector('#lb-phone-damage-canvas');
         if (!canvas) {
@@ -180,7 +187,7 @@
         return overlay;
     }
 
-    async function composeDamage(canvas, level, seed, token) {
+    async function composeDamage(canvas, level, seed, damageColor, token) {
         const phases = [];
         for (let phase = 1; phase <= level; phase += 1) {
             if (!cracks[phase]) continue;
@@ -215,8 +222,10 @@
         context.globalCompositeOperation = 'multiply';
 
         phases.forEach(function (phase) {
-            const drawWidth = width * 1.2;
-            const drawHeight = height * 1.2;
+            // Keep the image edges outside the display even after rotation and
+            // random offsets. The tall phone aspect ratio needs extra width.
+            const drawWidth = width * 1.5;
+            const drawHeight = height * 1.35;
             context.save();
             context.translate(width * (0.5 + phase.x / 100), height * (0.5 + phase.y / 100));
             context.rotate(phase.rotation * Math.PI / 180);
@@ -226,10 +235,25 @@
             }
             context.restore();
         });
+
+        // Apply the old SVG contrast curve directly to the pixels. FiveM's CEF
+        // clips filtered elements at rounded corners in both color modes.
+        const imageData = context.getImageData(0, 0, width, height);
+        const pixels = imageData.data;
+        for (let index = 0; index < pixels.length; index += 4) {
+            const red = crackLevels[pixels[index]];
+            const green = crackLevels[pixels[index + 1]];
+            const blue = crackLevels[pixels[index + 2]];
+            pixels[index] = damageColor === 2 ? 255 - red : red;
+            pixels[index + 1] = damageColor === 2 ? 255 - green : green;
+            pixels[index + 2] = damageColor === 2 ? 255 - blue : blue;
+        }
+        context.putImageData(imageData, 0, 0);
         context.globalCompositeOperation = 'source-over';
         canvas.dataset.phases = String(phases.length);
         canvas.dataset.damageLevel = String(level);
         canvas.dataset.damageSeed = String(seed);
+        canvas.dataset.damageColor = String(damageColor);
         canvas.dataset.transforms = JSON.stringify(phases.map(function (phase) {
             return [phase.phase, phase.x, phase.y, phase.rotation, phase.scale, phase.scaleX, phase.scaleY];
         }));
@@ -243,6 +267,9 @@
         overlay.style.pointerEvents = touchFaultActive ? 'auto' : 'none';
         const level = Math.max(0, Math.min(3, Number(lastData.damageLevel) || 0));
         const seed = Number(lastData.damageSeed) || 1;
+        const damageColor = Number(lastData.damageColor) === 2 ? 2 : 1;
+        overlay.style.filter = 'none';
+        overlay.style.mixBlendMode = damageColor === 2 ? 'screen' : 'multiply';
         const visible = level > 0 && lastData.state !== 'closed';
         renderToken += 1;
         if (!visible) {
@@ -252,16 +279,18 @@
             canvas.dataset.phases = '0';
             canvas.dataset.damageLevel = '0';
             canvas.dataset.damageSeed = '0';
+            canvas.dataset.damageColor = String(damageColor);
             canvas.dataset.transforms = '[]';
             return;
         }
 
         const renderedLevel = Number(canvas.dataset.damageLevel) || 0;
         const renderedSeed = Number(canvas.dataset.damageSeed) || 0;
-        const frameIsCompatible = renderedSeed === seed && renderedLevel > 0 && renderedLevel <= level;
+        const renderedColor = Number(canvas.dataset.damageColor) || 1;
+        const frameIsCompatible = renderedSeed === seed && renderedColor === damageColor && renderedLevel > 0 && renderedLevel <= level;
         overlay.style.display = frameIsCompatible ? 'block' : 'none';
         const token = renderToken;
-        composeDamage(canvas, level, seed, token).catch(function (error) {
+        composeDamage(canvas, level, seed, damageColor, token).catch(function (error) {
             const message = error instanceof Error ? error.message : String(error);
             if (reportedLoadErrors.has(message)) return;
             reportedLoadErrors.add(message);

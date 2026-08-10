@@ -33,8 +33,13 @@ with a leading slash:
 /phonedamage 1 [phoneNumber]
 /phonedamage 2 [phoneNumber]
 /phonedamage 3 [phoneNumber]
+/phonedamagecolor 1
+/phonedamagecolor 2
 /phonerepair [phoneNumber]
 ```
+
+`/phonedamagecolor 1` uses black cracks (default); mode `2` uses white cracks.
+This visual preference is stored locally for each client.
 
 For compatibility, `/brokenphone` and `/brokenphonerepair` are registered as
 aliases with the same ACE restriction.

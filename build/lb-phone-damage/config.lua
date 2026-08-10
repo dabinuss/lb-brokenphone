@@ -39,9 +39,13 @@ Config.Commands = {
     enabled = true,
     restricted = false,
     setDamage = 'phonedamage',
+    setDamageColor = 'phonedamagecolor',
     repair = 'phonerepair',
     legacySetDamage = 'brokenphone',
     legacyRepair = 'brokenphonerepair'
 }
+
+-- 1 = black cracks, 2 = white cracks. The command selection is stored per client.
+Config.DefaultDamageColor = 1
 
 Config.MaxPhoneNumberLength = 32
