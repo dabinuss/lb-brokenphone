@@ -2,7 +2,7 @@ local state = {
     phoneNumber = nil,
     damageLevel = 0,
     damageSeed = 0,
-    damageColor = 1,
+    damageColor = 'black',
     phoneOpen = false,
     phoneOnScreen = false,
     visualState = 'closed'
@@ -11,15 +11,9 @@ local state = {
 local transitionToken = 0
 local touchToken = 0
 local touchFaultActive = false
-local damageColorKvp = 'lb-phone-damage:color'
-
 local function normalizeDamageColor(value)
-    value = tonumber(value)
-    if value == 2 then return 2 end
-    return 1
+    return value == 'white' and 'white' or 'black'
 end
-
-state.damageColor = normalizeDamageColor(GetResourceKvpInt(damageColorKvp) or Config.DefaultDamageColor)
 
 local function debugLog(message)
     if Config.Debug then
@@ -174,6 +168,13 @@ RegisterNetEvent('lb-phone-damage:client:receiveDamage', function(phoneNumber, d
     updateVisibility()
 end)
 
+RegisterNetEvent('lb-phone-damage:client:setDamageColor', function(damageColor)
+    local nextColor = normalizeDamageColor(damageColor)
+    if state.damageColor == nextColor then return end
+    state.damageColor = nextColor
+    sendNuiUpdate()
+end)
+
 RegisterNetEvent('lb-phone-damage:client:commandResult', function(message, success)
     local color = success == false and '^1' or '^2'
     print(('%s[lb-phone-damage]^7 %s'):format(color, tostring(message)))
@@ -206,22 +207,8 @@ local function repairCommand(_, args)
     TriggerServerEvent('lb-phone-damage:server:testRepair', args[1])
 end
 
-local function damageColorCommand(_, args)
-    local damageColor = tonumber(args[1])
-    if not damageColor or damageColor % 1 ~= 0 or damageColor < 1 or damageColor > 2 then
-        commandLog(('Usage: /%s <1-2> (1 = black, 2 = white)'):format(Config.Commands.setDamageColor))
-        return
-    end
-
-    state.damageColor = damageColor
-    SetResourceKvpInt(damageColorKvp, damageColor)
-    sendNuiUpdate()
-    commandLog(('Crack color set to %s.'):format(damageColor == 1 and 'black' or 'white'))
-end
-
 if Config.Commands.enabled then
     RegisterCommand(Config.Commands.setDamage, damageCommand, false)
-    RegisterCommand(Config.Commands.setDamageColor, damageColorCommand, false)
     RegisterCommand(Config.Commands.repair, repairCommand, false)
     if Config.Commands.legacySetDamage and Config.Commands.legacySetDamage ~= Config.Commands.setDamage then
         RegisterCommand(Config.Commands.legacySetDamage, damageCommand, false)

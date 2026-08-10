@@ -39,20 +39,21 @@
         { rotate: 180, scaleX: 1, scaleY: 1 }
     ];
     const layerCounts = { 1: 3, 2: 2, 3: 1 };
-    const crackFilterId = 'lb-phone-damage-levels';
     const phaseSeedStep = 1000003;
     const crackLevels = Uint8Array.from({ length: 256 }, function (_, value) {
         const normalized = Math.min(255, value * 1.02) / 255;
         return Math.round(normalized * normalized * normalized * 255);
     });
 
-    let lastData = { damageLevel: 0, damageSeed: 0, damageColor: 1, state: 'closed' };
+    let lastData = { damageLevel: 0, damageSeed: 0, damageColor: 'black', state: 'closed' };
     let touchFaultActive = false;
     let renderToken = 0;
     let targetWindow = null;
     let targetDocument = null;
     let observedDocument = null;
-    let targetObserver = null;
+    let currentPhoneContainer = null;
+    let phoneHostObserver = null;
+    let resizeObserver = null;
     let renderFrame = null;
     let connectTimer = null;
     const imageCache = new Map();
@@ -102,10 +103,12 @@
         return imageCache.get(url);
     }
 
-    function ensureOverlay() {
-        if (!targetDocument && !resolveLbPhoneTarget()) return null;
-        const phone = targetDocument.querySelector('.phone-container');
-        if (!phone) return null;
+    function getPhoneContainer() {
+        return targetDocument?.querySelector('.phone-container') || null;
+    }
+
+    function ensureOverlay(phone) {
+        if (!targetDocument || !phone) return null;
         let overlay = targetDocument.getElementById('lb-phone-damage-overlay');
         if (overlay && overlay.parentElement !== phone) overlay.remove();
         if (!overlay || !overlay.isConnected) {
@@ -149,6 +152,42 @@
             overlay.appendChild(canvas);
         }
         return overlay;
+    }
+
+    function removeOverlay() {
+        const overlays = new Set([
+            currentPhoneContainer?.querySelector('#lb-phone-damage-overlay'),
+            observedDocument?.getElementById('lb-phone-damage-overlay'),
+            targetDocument?.getElementById('lb-phone-damage-overlay')
+        ]);
+        overlays.forEach(function (overlay) {
+            overlay?.remove();
+        });
+    }
+
+    function detachFromCurrentContainer() {
+        if (resizeObserver) resizeObserver.disconnect();
+        resizeObserver = null;
+        removeOverlay();
+        currentPhoneContainer = null;
+    }
+
+    function attachToPhoneContainer(container) {
+        ensureOverlay(container);
+        resizeObserver = new ResizeObserver(scheduleRender);
+        resizeObserver.observe(container);
+    }
+
+    function checkPhoneContainer() {
+        const nextContainer = getPhoneContainer();
+        if (nextContainer === currentPhoneContainer) return;
+
+        detachFromCurrentContainer();
+        currentPhoneContainer = nextContainer;
+        if (!currentPhoneContainer) return;
+
+        attachToPhoneContainer(currentPhoneContainer);
+        scheduleRender();
     }
 
     async function composeDamage(canvas, level, seed, damageColor, token, width, height) {
@@ -197,17 +236,16 @@
             context.restore();
         });
 
-        // Apply the old SVG contrast curve directly to the pixels. FiveM's CEF
-        // clips filtered elements at rounded corners in both color modes.
+        // Apply contrast and color conversion directly to the canvas pixels.
         const imageData = context.getImageData(0, 0, width, height);
         const pixels = imageData.data;
         for (let index = 0; index < pixels.length; index += 4) {
             const red = crackLevels[pixels[index]];
             const green = crackLevels[pixels[index + 1]];
             const blue = crackLevels[pixels[index + 2]];
-            pixels[index] = damageColor === 2 ? 255 - red : red;
-            pixels[index + 1] = damageColor === 2 ? 255 - green : green;
-            pixels[index + 2] = damageColor === 2 ? 255 - blue : blue;
+            pixels[index] = damageColor === 'white' ? 255 - red : red;
+            pixels[index + 1] = damageColor === 'white' ? 255 - green : green;
+            pixels[index + 2] = damageColor === 'white' ? 255 - blue : blue;
         }
         context.putImageData(imageData, 0, 0);
         context.globalCompositeOperation = 'source-over';
@@ -224,15 +262,15 @@
     }
 
     function render() {
-        const overlay = ensureOverlay();
+        const overlay = ensureOverlay(currentPhoneContainer);
         if (!overlay) return;
         const canvas = overlay.querySelector('#lb-phone-damage-canvas');
         overlay.style.pointerEvents = touchFaultActive ? 'auto' : 'none';
         const level = Math.max(0, Math.min(3, Number(lastData.damageLevel) || 0));
         const seed = Number(lastData.damageSeed) || 1;
-        const damageColor = Number(lastData.damageColor) === 2 ? 2 : 1;
+        const damageColor = lastData.damageColor === 'white' ? 'white' : 'black';
         overlay.style.filter = 'none';
-        overlay.style.mixBlendMode = damageColor === 2 ? 'screen' : 'multiply';
+        overlay.style.mixBlendMode = damageColor === 'white' ? 'screen' : 'multiply';
         const visible = level > 0 && lastData.state !== 'closed';
         renderToken += 1;
         if (!visible) {
@@ -256,7 +294,7 @@
         const height = Math.max(1, Math.round(displayHeight * pixelRatio));
         const renderedLevel = Number(canvas.dataset.damageLevel) || 0;
         const renderedSeed = Number(canvas.dataset.damageSeed) || 0;
-        const renderedColor = Number(canvas.dataset.damageColor) || 1;
+        const renderedColor = canvas.dataset.damageColor || 'black';
         const renderedWidth = Number(canvas.dataset.width) || 0;
         const renderedHeight = Number(canvas.dataset.height) || 0;
         const exactMatch = renderedLevel === level
@@ -297,12 +335,12 @@
         if (!event.data) return;
         if (event.data.action === 'lb-phone-damage:touchFault') {
             touchFaultActive = event.data.active === true;
-            render();
+            scheduleRender();
             return;
         }
         if (event.data.action !== 'lb-phone-damage:update') return;
         lastData = event.data;
-        render();
+        scheduleRender();
     });
 
     fetch(`https://${GetParentResourceName()}/ready`, {
@@ -312,15 +350,28 @@
     }).catch(function () {});
 
     function connectRenderer() {
-        if (!resolveLbPhoneTarget()) return;
-        if (observedDocument === targetDocument) return;
+        if (!resolveLbPhoneTarget()) {
+            if (observedDocument) disconnectObservedDocument();
+            return;
+        }
+        if (observedDocument === targetDocument) {
+            checkPhoneContainer();
+            return;
+        }
 
-        if (targetObserver) targetObserver.disconnect();
+        disconnectObservedDocument();
         observedDocument = targetDocument;
-        targetObserver = new MutationObserver(scheduleRender);
-        targetObserver.observe(targetDocument.documentElement, { childList: true, subtree: true });
+        phoneHostObserver = new MutationObserver(checkPhoneContainer);
+        phoneHostObserver.observe(targetDocument.documentElement, { childList: true, subtree: true });
         console.log('[lb-phone-damage][external] connected to lb-phone DOM');
-        scheduleRender();
+        checkPhoneContainer();
+    }
+
+    function disconnectObservedDocument() {
+        if (phoneHostObserver) phoneHostObserver.disconnect();
+        phoneHostObserver = null;
+        detachFromCurrentContainer();
+        observedDocument = null;
     }
 
     function cleanup() {
@@ -329,17 +380,8 @@
         renderFrame = null;
         if (connectTimer !== null) window.clearInterval(connectTimer);
         connectTimer = null;
-        if (targetObserver) targetObserver.disconnect();
-        targetObserver = null;
-
-        const documents = new Set([targetDocument, observedDocument]);
-        documents.forEach(function (documentToClean) {
-            if (!documentToClean) return;
-            documentToClean.getElementById('lb-phone-damage-overlay')?.remove();
-            documentToClean.getElementById(crackFilterId)?.remove();
-        });
-
-        observedDocument = null;
+        disconnectObservedDocument();
+        removeOverlay();
         targetDocument = null;
         targetWindow = null;
     }

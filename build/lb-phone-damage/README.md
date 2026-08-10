@@ -19,26 +19,43 @@ severe crack.
 
    ```cfg
    add_ace group.admin command.phonedamage allow
+   add_ace group.admin command.phonedamagecolor allow
    add_ace group.admin command.phonerepair allow
    ```
 
+   The color command is always ACE-restricted because it changes the appearance
+   globally for every player.
+
+## Configuration
+
+Set the server-wide crack color in `config.lua`:
+
+```lua
+Config.DamageColor = 'black' -- 'black' or 'white'
+```
+
+This value is the authoritative default for every player. It is not stored in
+client KVP or in the phone damage database.
+
 ## Test commands
 
-Run these locally in the FiveM F8 console (without a leading slash), or in chat
-with a leading slash:
+Run the damage and repair test commands locally in the FiveM F8 console
+(without a leading slash), or in chat with a leading slash. The global color
+command is available through chat or the server console:
 
 ```text
 /phonedamage 1 [phoneNumber]
 /phonedamage 2 [phoneNumber]
 /phonedamage 3 [phoneNumber]
-/phonedamagecolor 1
-/phonedamagecolor 2
+/phonedamagecolor black
+/phonedamagecolor white
 /phonerepair [phoneNumber]
 ```
 
-`/phonedamagecolor 1` uses black cracks (default); mode `2` uses white cracks.
-The selection is a local player preference stored by the client. It is not part
-of the persistent, phone-number-based damage record.
+`/phonedamagecolor` is a server-side admin command that updates every connected
+client. Its runtime selection lasts until the resource restarts; the configured
+`Config.DamageColor` is then applied again. The color is not part of an
+individual phone's persistent damage record.
 
 For compatibility, `/brokenphone` and `/brokenphonerepair` are registered as
 aliases. When command restrictions are enabled, each alias only grants access

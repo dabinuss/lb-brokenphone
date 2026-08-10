@@ -4,6 +4,7 @@ local databaseMode = nil
 local databaseReady = false
 local databaseStarting = false
 local databaseWaiters = {}
+local damageColor = Config.DamageColor == 'white' and 'white' or 'black'
 
 local tableName = tostring(Config.Database.tableName or 'phone_damage')
 local fallbackPath = tostring(Config.Database.jsonFile or 'data/phone_damage.json')
@@ -26,6 +27,16 @@ local function normalizeLevel(level)
     level = tonumber(level)
     if not level or level % 1 ~= 0 or level < 1 or level > 3 then return nil end
     return level
+end
+
+local function normalizeDamageColor(value)
+    value = type(value) == 'string' and value:lower() or nil
+    if value == 'black' or value == 'white' then return value end
+    return nil
+end
+
+local function sendDamageColor(playerSource)
+    TriggerClientEvent('lb-phone-damage:client:setDamageColor', playerSource, damageColor)
 end
 
 local function loadFallbackData()
@@ -284,6 +295,11 @@ local function hasRepairPermission(playerSource)
         or (Config.Commands.legacyRepair and IsPlayerAceAllowed(playerSource, ('command.%s'):format(Config.Commands.legacyRepair)))
 end
 
+local function hasDamageColorPermission(playerSource)
+    if playerSource == 0 then return true end
+    return IsPlayerAceAllowed(playerSource, ('command.%s'):format(Config.Commands.setDamageColor))
+end
+
 RegisterNetEvent('lb-phone-damage:server:testDamage', function(level, requestedPhoneNumber)
     local playerSource = source
     if not hasDamagePermission(playerSource) then
@@ -330,6 +346,7 @@ end)
 
 RegisterNetEvent('lb-phone-damage:server:syncPhone', function()
     local playerSource = source
+    sendDamageColor(playerSource)
     local phoneNumber = resolveEquippedPhone(playerSource)
     activePhoneBySource[playerSource] = phoneNumber
     if phoneNumber then sendDamage(playerSource, phoneNumber) end
@@ -414,7 +431,23 @@ if Config.Commands.enabled then
             or ('Repair failed: %s'):format(err or 'unknown_error'), success)
     end
 
+    local function damageColorCommand(playerSource, args)
+        if not hasDamageColorPermission(playerSource) then
+            return commandReply(playerSource, 'You do not have permission to change the global crack color.', false)
+        end
+
+        local nextColor = normalizeDamageColor(args[1])
+        if not nextColor then
+            return commandReply(playerSource, ('Usage: /%s <black|white>'):format(Config.Commands.setDamageColor), false)
+        end
+
+        damageColor = nextColor
+        TriggerClientEvent('lb-phone-damage:client:setDamageColor', -1, damageColor)
+        commandReply(playerSource, ('Global crack color set to %s.'):format(damageColor), true)
+    end
+
     RegisterCommand(Config.Commands.setDamage, damageCommand, Config.Commands.restricted)
+    RegisterCommand(Config.Commands.setDamageColor, damageColorCommand, false)
     RegisterCommand(Config.Commands.repair, repairCommand, Config.Commands.restricted)
 
     if Config.Commands.legacySetDamage and Config.Commands.legacySetDamage ~= Config.Commands.setDamage then
