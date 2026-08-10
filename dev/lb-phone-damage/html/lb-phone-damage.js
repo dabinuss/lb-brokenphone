@@ -60,6 +60,7 @@
     let hackAudioPath = null;
     let lastHackSoundAt = -Infinity;
     let hackWasVisible = false;
+    let typeToken = 0;
     let renderToken = 0;
     let targetWindow = null;
     let targetDocument = null;
@@ -128,6 +129,34 @@
 
     function hackActive() {
         return lastData.isHacked === true && lastData.state !== 'closed';
+    }
+
+    function startTypingEffect(element, text) {
+        if (!text) {
+            element.textContent = '';
+            return;
+        }
+        typeToken++;
+        const currentToken = typeToken;
+        let i = 0;
+        
+        function typeNext() {
+            if (currentToken !== typeToken || !hackActive()) return;
+            
+            element.textContent = text.slice(0, i);
+            i++;
+            
+            if (i <= text.length) {
+                setTimeout(typeNext, 80 + Math.random() * 70);
+            } else {
+                setTimeout(function() {
+                    if (currentToken === typeToken && hackActive()) {
+                        startTypingEffect(element, text);
+                    }
+                }, 2000);
+            }
+        }
+        typeNext();
     }
 
     function stopHackSound() {
@@ -232,6 +261,40 @@
             hackScreen.appendChild(hackImage);
             overlay.appendChild(hackScreen);
         }
+        
+        let hackText = hackScreen.querySelector('#lb-phone-damage-hack-text');
+        if (!hackText) {
+            hackText = targetDocument.createElement('div');
+            hackText.id = 'lb-phone-damage-hack-text';
+            Object.assign(hackText.style, {
+                position: 'absolute',
+                bottom: '18%',
+                width: '100%',
+                textAlign: 'center',
+                color: '#00ff00',
+                fontFamily: 'monospace',
+                fontSize: '1.2rem',
+                fontWeight: 'bold',
+                textShadow: '0 0 3px #00ff00',
+                whiteSpace: 'pre-wrap',
+                zIndex: '3',
+                pointerEvents: 'none',
+                opacity: '1'
+            });
+            hackText.animate([
+                { opacity: 1, transform: 'translate(0)' },
+                { opacity: 0.8, transform: 'translate(-1px, 1px)' },
+                { opacity: 1, transform: 'translate(1px, -1px)' },
+                { opacity: 0.9, transform: 'translate(0)' }
+            ], {
+                duration: 150,
+                iterations: Infinity,
+                direction: 'alternate',
+                easing: 'steps(2)'
+            });
+            hackScreen.appendChild(hackText);
+        }
+        
         let scanlines = hackScreen.querySelector('#lb-phone-damage-scanlines');
         if (!scanlines) {
             scanlines = targetDocument.createElement('div');
@@ -408,6 +471,7 @@
         const canvas = overlay.querySelector('#lb-phone-damage-canvas');
         const hackScreen = overlay.querySelector('#lb-phone-damage-hack');
         const hackImage = hackScreen?.querySelector('#lb-phone-damage-hack-image');
+        const hackTextEl = hackScreen?.querySelector('#lb-phone-damage-hack-text');
         const level = Math.max(0, Math.min(3, Number(lastData.damageLevel) || 0));
         const hacked = lastData.isHacked === true;
         overlay.style.pointerEvents = touchFaultActive || hacked ? 'auto' : 'none';
@@ -439,7 +503,10 @@
         }
 
         if (hacked) {
-            if (!hackWasVisible) playHackSound(true);
+            if (!hackWasVisible) {
+                playHackSound(true);
+                if (hackTextEl) startTypingEffect(hackTextEl, lastData.hackText);
+            }
             hackWasVisible = true;
             if (hackScreen) hackScreen.style.display = 'flex';
             if (hackImage) {

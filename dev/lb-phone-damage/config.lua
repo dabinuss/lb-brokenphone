@@ -10,6 +10,7 @@ Config.DamageColor = 'white'
 -- to the resource's html directory.
 Config.Hack = {
     image = 'hack/ahahah.gif', -- Animation shown in the center of the blocked phone display.
+    text = 'AH AH AH!',        -- Text shown under the image.
     sound = 'hack/ahahah.ogg', -- Sound played when the blocked display is clicked.
     soundVolume = 0.65,        -- Playback volume from 0.0 (silent) to 1.0 (full volume).
     soundCooldown = 300,       -- Minimum milliseconds between click sounds.

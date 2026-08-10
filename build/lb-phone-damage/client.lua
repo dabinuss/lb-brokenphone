@@ -46,6 +46,7 @@ local function sendNuiUpdate(force)
         state.hackExpiresAt,
         state.damageColor,
         Config.Hack.image,
+        Config.Hack.text,
         Config.Hack.sound,
         Config.Hack.soundVolume,
         Config.Hack.soundCooldown
@@ -62,6 +63,7 @@ local function sendNuiUpdate(force)
         hackExpiresAt = state.hackExpiresAt,
         damageColor = state.damageColor,
         hackImage = Config.Hack.image,
+        hackText = Config.Hack.text,
         hackSound = Config.Hack.sound,
         hackSoundVolume = Config.Hack.soundVolume,
         hackSoundCooldown = Config.Hack.soundCooldown
