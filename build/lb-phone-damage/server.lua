@@ -162,7 +162,11 @@ local function persistDamageState(phoneNumber, state, callback)
         local sql = ([=[
             INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`) VALUES (?, ?, ?)
             ON DUPLICATE KEY UPDATE
-                `damage_level` = GREATEST(`damage_level`, VALUES(`damage_level`))
+                `damage_level` = GREATEST(`damage_level`, VALUES(`damage_level`)),
+                `damage_seed` = CASE
+                    WHEN `damage_seed` = 0 THEN VALUES(`damage_seed`)
+                    ELSE `damage_seed`
+                END
         ]=]):format(tableName)
         query(sql, { phoneNumber, state.damageLevel, state.damageSeed }, function(_, err)
             if err then return callback(false, 'database_query_failed') end
@@ -511,7 +515,11 @@ local function persistBulkDamageUnlocked(changes)
         local sql = ([=[
             INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`) VALUES %s
             ON DUPLICATE KEY UPDATE
-                `damage_level` = GREATEST(`damage_level`, VALUES(`damage_level`))
+                `damage_level` = GREATEST(`damage_level`, VALUES(`damage_level`)),
+                `damage_seed` = CASE
+                    WHEN `damage_seed` = 0 THEN VALUES(`damage_seed`)
+                    ELSE `damage_seed`
+                END
         ]=]):format(tableName, table.concat(values, ', '))
         local _, queryError = awaitResult(function(done)
             query(sql, params, done)
