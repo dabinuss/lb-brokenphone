@@ -61,6 +61,43 @@ Normal servers usually do not need to change these values. A larger batch size
 finishes sooner but creates larger individual queries; a larger delay spreads
 the work out more.
 
+### Automatic gameplay damage
+
+`Config.AutoDamage` can automatically damage the currently equipped phone after
+a gunshot, melee hit, vehicle crash, or explosion. Combat events are only
+reported when the player actually loses health or armour. A vehicle crash must
+combine sufficient pre-impact speed, sudden speed loss, a collision, and vehicle
+body damage. Falls, water damage, and medical/downed states are not detected.
+
+The client only reports an event type and normalized severity. The server owns
+the whitelist, cooldowns, probability roll, escalation, maximum result level,
+phone lookup, and persistence. Set `Config.AutoDamage.enabled = false` to disable
+automatic events without affecting commands, exports, repairs, or manual damage.
+
+Important global settings:
+
+- `dynamicChance`: scales the base chance from 50% at severity `0.0` to 150% at
+  severity `1.0`, capped at 100%. Set it to `false` for fixed chances.
+- `networkRateLimit`: inexpensive protection between raw client reports.
+- `successCooldown`: blocks every automatic cause after a successful damage
+  change, preventing several causes from escalating one incident repeatedly.
+- `clientDebounce`: suppresses duplicate local reports of the same cause.
+- `damageReference`: health/armour loss that represents severity `1.0`.
+
+Each entry under `Config.AutoDamage.events` has these settings:
+
+- `enabled`: enables only that event type.
+- `chance`: base server-side probability from 0 to 100 percent.
+- `cooldown`: time between attempts of that event type for one player.
+- `minSeverity`: weakest accepted event from `0.0` to `1.0`.
+- `escalation`: number of damage levels a successful event may add.
+- `maxResultLevel`: highest phone damage level that event may produce.
+
+`Config.AutoDamage.vehicle` controls crash sampling and confirmation thresholds.
+Speeds are metres per second; multiply by 3.6 for km/h. `impactWindow` allows the
+collision and body-damage signals to arrive in adjacent samples. Higher minimum
+values reduce sensitivity and false positives.
+
 ## Test commands
 
 All commands are registered server-side. Run them in chat with a leading slash,
@@ -134,6 +171,11 @@ exports['lb-phone-damage']:ApplyPhoneDamage(source, 2, 'vehicle_crash')
 exports['lb-phone-damage']:ApplyPhoneDamageByNumber(phoneNumber, 3, 'water_damage')
 exports['lb-phone-damage']:EscalatePhoneDamage(source, 'additional_impact')
 exports['lb-phone-damage']:EscalatePhoneDamageByNumber(phoneNumber, 'additional_impact')
+exports['lb-phone-damage']:ApplyPhoneDamageDelta(source, 2, 3, 'heavy_impact')
+exports['lb-phone-damage']:ApplyPhoneDamageDeltaByNumber(phoneNumber, 2, 3, 'heavy_impact')
+
+-- Uses AutoDamage chance, severity, cooldown, escalation, and level-cap settings.
+exports['lb-phone-damage']:TryAutoDamage(source, 'vehicle_crash', 0.82)
 
 local success, err, summary = exports['lb-phone-damage']:ApplyBulkPhoneDamage(
     playerSources,
@@ -175,6 +217,8 @@ local allRepaired, allRepairErr, allRepairSummary =
 ```
 
 Single-phone damage and escalation exports return `success, error, damage`.
+Delta and `TryAutoDamage` exports additionally return `changed` as their fourth
+value. `changed` is false when the phone was already at the event's maximum.
 Repair exports return `success, error`. Bulk, all-player, and area exports
 return `success, error, summary`. `GetPhoneDamage` returns the damage state, or
 `nil, error` when it cannot be loaded.
@@ -184,6 +228,14 @@ medium to severe; severe remains severe. Applying a lower or equal fixed level
 never lowers damage or changes its visual seed. The original seed is also
 retained when damage increases, so every previously visible crack remains
 exactly in place.
+
+`ApplyPhoneDamageDelta(source, escalation, maxResultLevel, cause)` and its
+phone-number variant atomically add one or more levels without exceeding the
+given cap. `TryAutoDamage(source, cause, severity)` is intended for optional
+server-side integrations. It does not force damage: the configured event must
+be enabled and still passes through its severity threshold, cooldowns, and
+server-side chance roll. Use the normal damage exports when an event must always
+apply damage.
 
 Use the bulk exports for events affecting many players instead of looping the
 single-phone exports. They resolve equipped phones, deduplicate shared phone

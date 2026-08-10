@@ -8,8 +8,14 @@ author 'Dabinuss'
 version '1.0.0'
 
 shared_script 'config.lua'
-server_script 'server.lua'
-client_script 'client.lua'
+server_scripts {
+    'server.lua',
+    'integrations/damage-events.server.lua'
+}
+client_scripts {
+    'client.lua',
+    'integrations/damage-events.client.lua'
+}
 
 ui_page 'html/index.html'
 

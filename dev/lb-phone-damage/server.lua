@@ -369,6 +369,30 @@ local function escalateByNumberUnlocked(phoneNumber, cause)
     return applyByNumberUnlocked(phoneNumber, current.damageLevel + 1, cause or 'escalation')
 end
 
+local function applyDamageDeltaByNumberUnlocked(phoneNumber, escalation, maxResultLevel, cause)
+    phoneNumber = normalizePhoneNumber(phoneNumber)
+    escalation = tonumber(escalation)
+    maxResultLevel = tonumber(maxResultLevel or 3)
+    if not phoneNumber then return false, 'invalid_phone_number' end
+    if not escalation or escalation % 1 ~= 0 or escalation < 1 or escalation > 3 then
+        return false, 'invalid_escalation'
+    end
+    if not maxResultLevel or maxResultLevel % 1 ~= 0 or maxResultLevel < 1 or maxResultLevel > 3 then
+        return false, 'invalid_max_result_level'
+    end
+
+    local current, err = getCachedDamageUnlocked(phoneNumber)
+    if err then return false, err end
+    if current.damageLevel >= maxResultLevel then
+        notifyPhoneUsers(phoneNumber, current)
+        return true, nil, current, false
+    end
+
+    local targetLevel = math.min(3, maxResultLevel, current.damageLevel + escalation)
+    local success, applyError, state = applyByNumberUnlocked(phoneNumber, targetLevel, cause or 'damage_delta')
+    return success, applyError, state, success == true and targetLevel > current.damageLevel
+end
+
 local function applyByNumber(phoneNumber, level, cause)
     return runManaged(function()
         return applyByNumberUnlocked(phoneNumber, level, cause)
@@ -385,6 +409,19 @@ local function escalateByNumber(phoneNumber, cause)
     return runManaged(function()
         return escalateByNumberUnlocked(phoneNumber, cause)
     end)
+end
+
+local function applyDamageDeltaByNumber(phoneNumber, escalation, maxResultLevel, cause)
+    return runManaged(function()
+        return applyDamageDeltaByNumberUnlocked(phoneNumber, escalation, maxResultLevel, cause)
+    end)
+end
+
+local function applyPhoneDamageDelta(playerSource, escalation, maxResultLevel, cause)
+    local phoneNumber = resolveEquippedPhone(playerSource)
+    if not phoneNumber then return false, 'no_equipped_phone' end
+    setActivePhone(playerSource, phoneNumber)
+    return applyDamageDeltaByNumber(phoneNumber, escalation, maxResultLevel, cause)
 end
 
 local function collectBulkPhones(sources)
@@ -831,6 +868,11 @@ exports('EscalatePhoneDamage', function(playerSource, cause)
 end)
 
 exports('EscalatePhoneDamageByNumber', escalateByNumber)
+exports('ApplyPhoneDamageDelta', applyPhoneDamageDelta)
+exports('ApplyPhoneDamageDeltaByNumber', applyDamageDeltaByNumber)
+
+LBPhoneDamageCore = LBPhoneDamageCore or {}
+LBPhoneDamageCore.applyPhoneDamageDelta = applyPhoneDamageDelta
 
 exports('GetPhoneDamage', function(phoneNumber)
     return runManaged(function()

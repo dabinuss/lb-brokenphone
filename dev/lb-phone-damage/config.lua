@@ -44,6 +44,66 @@ Config.Touch = {
     }
 }
 
+-- Optional gameplay integration. Clients only detect possible impacts; all
+-- cooldowns, probability rolls, level changes, and persistence remain server-side.
+Config.AutoDamage = {
+    enabled = true,          -- Set to false to disable only automatic gameplay damage.
+    debug = false,           -- Print accepted/rejected automatic damage attempts on the server.
+    dynamicChance = true,    -- Scale each base chance from 50% to 150% using event severity.
+    networkRateLimit = 250,  -- Minimum milliseconds between raw client reports per player.
+    successCooldown = 30000, -- Block every automatic cause after one successful phone damage.
+    clientDebounce = 1000,   -- Minimum milliseconds between reports of the same cause on a client.
+    damageReference = 100,   -- Health/armour loss treated as severity 1.0 for combat damage.
+
+    vehicle = {
+        pollInterval = 100,           -- Vehicle crash sampling interval in milliseconds.
+        idlePollInterval = 750,       -- Sampling interval while the player is not in a vehicle.
+        impactWindow = 500,           -- Time allowed for collision and body damage to arrive in adjacent samples.
+        minSpeed = 18.0,              -- Minimum pre-impact speed in m/s (18 m/s is about 65 km/h).
+        minSpeedLoss = 8.0,           -- Required speed loss between samples in m/s.
+        minBodyHealthLoss = 5.0,      -- Required vehicle body-health loss to confirm a collision.
+        speedLossReference = 35.0,    -- Speed loss in m/s treated as severity 1.0.
+        bodyHealthLossReference = 250.0 -- Body-health loss treated as severity 1.0.
+    },
+
+    -- Event values define: enabled state, base chance (%), attempt cooldown (ms),
+    -- minimum severity (0.0-1.0), added levels, and the highest permitted result.
+    events = {
+        gunshot = {
+            enabled = true,
+            chance = 8,          -- Base probability in percent.
+            cooldown = 30000,    -- Minimum time between gunshot rolls for one player.
+            minSeverity = 0.03,  -- Minimum normalized health/armour loss.
+            escalation = 1,      -- Maximum damage levels added by one successful roll.
+            maxResultLevel = 2   -- Gunshots can produce at most medium phone damage.
+        },
+        melee = {
+            enabled = true,
+            chance = 5,
+            cooldown = 30000,
+            minSeverity = 0.05,
+            escalation = 1,
+            maxResultLevel = 1
+        },
+        vehicle_crash = {
+            enabled = true,
+            chance = 25,
+            cooldown = 45000,
+            minSeverity = 0.35,
+            escalation = 1,
+            maxResultLevel = 3
+        },
+        explosion = {
+            enabled = true,
+            chance = 70,
+            cooldown = 60000,
+            minSeverity = 0.05,
+            escalation = 2,
+            maxResultLevel = 3
+        }
+    }
+}
+
 Config.Commands = {
     enabled = true,                         -- Register test/admin commands; production exports remain available when false.
     restricted = false,                    -- Require matching ACE permissions for damage and repair commands.
@@ -86,6 +146,24 @@ local function validateCommandName(name, value, optional)
     assert(type(value) == 'string' and value ~= '', ('%s must be a non-empty string'):format(name))
 end
 
+local function assertNumberRange(name, value, minimum, maximum)
+    assert(type(value) == 'number' and value >= minimum and value <= maximum,
+        ('%s must be a number between %s and %s'):format(name, minimum, maximum))
+end
+
+local function validateAutoDamageEvent(name, eventConfig)
+    local path = ('Config.AutoDamage.events.%s'):format(name)
+    assert(type(eventConfig) == 'table', ('%s must be a table'):format(path))
+    assert(type(eventConfig.enabled) == 'boolean', ('%s.enabled must be true or false'):format(path))
+    assertNumberRange(('%s.chance'):format(path), eventConfig.chance, 0, 100)
+    assertInteger(('%s.cooldown'):format(path), eventConfig.cooldown, 0)
+    assertNumberRange(('%s.minSeverity'):format(path), eventConfig.minSeverity, 0, 1)
+    assertInteger(('%s.escalation'):format(path), eventConfig.escalation, 1)
+    assert(eventConfig.escalation <= 3, ('%s.escalation must not exceed 3'):format(path))
+    assertInteger(('%s.maxResultLevel'):format(path), eventConfig.maxResultLevel, 1)
+    assert(eventConfig.maxResultLevel <= 3, ('%s.maxResultLevel must not exceed 3'):format(path))
+end
+
 assert(Config.DamageColor == 'black' or Config.DamageColor == 'white',
     "Config.DamageColor must be 'black' or 'white'")
 assert(type(Config.Debug) == 'boolean', 'Config.Debug must be true or false')
@@ -108,6 +186,28 @@ assert(type(Config.Touch) == 'table', 'Config.Touch must be a table')
 assert(type(Config.Touch.enabled) == 'boolean', 'Config.Touch.enabled must be true or false')
 validateTouchProfile('medium', Config.Touch.medium)
 validateTouchProfile('severe', Config.Touch.severe)
+assert(type(Config.AutoDamage) == 'table', 'Config.AutoDamage must be a table')
+assert(type(Config.AutoDamage.enabled) == 'boolean', 'Config.AutoDamage.enabled must be true or false')
+assert(type(Config.AutoDamage.debug) == 'boolean', 'Config.AutoDamage.debug must be true or false')
+assert(type(Config.AutoDamage.dynamicChance) == 'boolean', 'Config.AutoDamage.dynamicChance must be true or false')
+assertInteger('Config.AutoDamage.networkRateLimit', Config.AutoDamage.networkRateLimit, 0)
+assertInteger('Config.AutoDamage.successCooldown', Config.AutoDamage.successCooldown, 0)
+assertInteger('Config.AutoDamage.clientDebounce', Config.AutoDamage.clientDebounce, 0)
+assertNumberRange('Config.AutoDamage.damageReference', Config.AutoDamage.damageReference, 1, 10000)
+assert(type(Config.AutoDamage.vehicle) == 'table', 'Config.AutoDamage.vehicle must be a table')
+assertInteger('Config.AutoDamage.vehicle.pollInterval', Config.AutoDamage.vehicle.pollInterval, 50)
+assertInteger('Config.AutoDamage.vehicle.idlePollInterval', Config.AutoDamage.vehicle.idlePollInterval, 100)
+assertInteger('Config.AutoDamage.vehicle.impactWindow', Config.AutoDamage.vehicle.impactWindow, 100)
+assertNumberRange('Config.AutoDamage.vehicle.minSpeed', Config.AutoDamage.vehicle.minSpeed, 0, 200)
+assertNumberRange('Config.AutoDamage.vehicle.minSpeedLoss', Config.AutoDamage.vehicle.minSpeedLoss, 0.1, 200)
+assertNumberRange('Config.AutoDamage.vehicle.minBodyHealthLoss', Config.AutoDamage.vehicle.minBodyHealthLoss, 0, 1000)
+assertNumberRange('Config.AutoDamage.vehicle.speedLossReference', Config.AutoDamage.vehicle.speedLossReference, 0.1, 200)
+assertNumberRange('Config.AutoDamage.vehicle.bodyHealthLossReference', Config.AutoDamage.vehicle.bodyHealthLossReference, 0.1, 1000)
+assert(type(Config.AutoDamage.events) == 'table', 'Config.AutoDamage.events must be a table')
+validateAutoDamageEvent('gunshot', Config.AutoDamage.events.gunshot)
+validateAutoDamageEvent('melee', Config.AutoDamage.events.melee)
+validateAutoDamageEvent('vehicle_crash', Config.AutoDamage.events.vehicle_crash)
+validateAutoDamageEvent('explosion', Config.AutoDamage.events.explosion)
 assert(type(Config.Commands) == 'table', 'Config.Commands must be a table')
 assert(type(Config.Commands.enabled) == 'boolean', 'Config.Commands.enabled must be true or false')
 assert(type(Config.Commands.restricted) == 'boolean', 'Config.Commands.restricted must be true or false')
