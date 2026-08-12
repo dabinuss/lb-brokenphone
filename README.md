@@ -11,6 +11,20 @@ blocks the phone with a dark screen and animation, blocks input, and plays a
 sound when the screen is clicked. Existing cracks remain visible above the hack
 screen and can be repaired independently.
 
+## Screenshots
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/24cae25b-1d57-42c3-bd0e-05ba543d9770" width="180" alt="Services+ Screenshot 1" />
+  &nbsp;
+  <img src="https://github.com/user-attachments/assets/93304f61-41e6-4694-9aa1-6a155d49a069" width="180" alt="Services+ Screenshot 2" />
+</p>
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/9df8cdfe-b341-4533-bf79-54e17fc7de30" width="180" alt="Services+ Screenshot 3" />
+  &nbsp;
+  <img src="https://github.com/user-attachments/assets/958a9595-2121-4653-a2ab-cf546b55e2ce" width="180" alt="Services+ Screenshot 4" />
+</p>
+
 ## Installation
 
 Use the ready-to-install resource from `build/lb-phone-damage`. The `dev`
