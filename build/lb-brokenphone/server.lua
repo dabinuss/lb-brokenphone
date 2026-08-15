@@ -509,6 +509,10 @@ local function repairByNumberUnlocked(phoneNumber)
     if not phoneNumber then return false, 'invalid_phone_number' end
     local current, loadError = getCachedDamageUnlocked(phoneNumber)
     if loadError then return false, loadError end
+    if current.damageLevel == 0 and current.fireLevel == 0 then
+        return true, nil, copyDamageState(current), false
+    end
+
     local state = copyDamageState(current)
     state.damageLevel = 0
     state.damageSeed = 0
@@ -518,7 +522,7 @@ local function repairByNumberUnlocked(phoneNumber)
     if not success then return false, err end
     damageByPhone[phoneNumber] = state
     notifyPhoneUsers(phoneNumber, state)
-    return true
+    return true, nil, copyDamageState(state), true
 end
 
 local function applyFireByNumberUnlocked(phoneNumber, level, cause)
@@ -551,6 +555,10 @@ local function repairFireByNumberUnlocked(phoneNumber)
     if not phoneNumber then return false, 'invalid_phone_number' end
     local current, loadError = getCachedDamageUnlocked(phoneNumber)
     if loadError then return false, loadError end
+    if current.fireLevel == 0 then
+        return true, nil, copyDamageState(current), false
+    end
+
     local state = copyDamageState(current)
     state.fireLevel = 0
     state.fireSeed = 0
@@ -558,7 +566,7 @@ local function repairFireByNumberUnlocked(phoneNumber)
     if not success then return false, err end
     damageByPhone[phoneNumber] = state
     notifyPhoneUsers(phoneNumber, state)
-    return true
+    return true, nil, copyDamageState(state), true
 end
 
 clearHackUnlocked = function(phoneNumber, current, cause)
@@ -1427,6 +1435,23 @@ exports('GetPhoneDamage', function(phoneNumber)
         local result, err = getCachedDamageUnlocked(phoneNumber)
         if err then return nil, err end
         return copyDamageState(result)
+    end)
+end)
+
+exports('GetEquippedPhoneDamage', function(playerSource)
+    playerSource = tonumber(playerSource)
+    if not playerSource or playerSource <= 0 or playerSource % 1 ~= 0 then
+        return nil, 'invalid_source'
+    end
+
+    local phoneNumber = resolveEquippedPhone(playerSource)
+    if not phoneNumber then return nil, 'no_equipped_phone' end
+    setActivePhone(playerSource, phoneNumber)
+
+    return runManaged(function()
+        local result, err = getCachedDamageUnlocked(phoneNumber)
+        if err then return nil, err end
+        return copyDamageState(result), nil, phoneNumber
     end)
 end)
 

@@ -256,6 +256,99 @@ behavior belongs in the fire files and `Config.AutoFireDamage`. Persistence,
 equipped-phone resolution, synchronization, repair, and bulk operations remain
 in `server.lua` and should not be duplicated in an integration.
 
+## Repair shop integration
+
+`lb-brokenphone` provides server exports for phone lookup, damage lookup, repair,
+persistence, and synchronization. Your repair resource remains responsible for
+its NPC, target or marker, location and job validation, prices, money or items,
+animations, progress bars, and notifications. Call the repair exports only from
+trusted server-side code; `lb-brokenphone` deliberately has no client-callable
+repair network event.
+
+The three repair operations are intentionally separate:
+
+| Export | Repairs | Typical use |
+| --- | --- | --- |
+| `RepairPhone` | Cracks and fire damage | Normal repair shop |
+| `RepairPhoneFire` | Fire damage only | Specialized physical repair |
+| `RepairHackedPhone` | Hack state only | Electronic/software repair |
+
+A normal `RepairPhone` call never removes a hack. The source-based exports act
+on the player's currently equipped LB Phone; the `ByNumber` variants act on a
+specific phone number.
+
+Inspect the equipped phone before charging the player:
+
+```lua
+local damage, err, phoneNumber =
+    exports['lb-brokenphone']:GetEquippedPhoneDamage(source)
+
+if not damage then
+    return false, err
+end
+
+local needsRepair = damage.damageLevel > 0 or damage.fireLevel > 0
+if not needsRepair then
+    return false, 'phone_not_damaged'
+end
+```
+
+After your own server-side location, job, payment, or item checks succeed, run
+the repair and inspect `changed`:
+
+```lua
+local success, repairErr, repairedState, changed =
+    exports['lb-brokenphone']:RepairPhone(source)
+
+if not success then
+    -- Refund the payment or item here if your integration already removed it.
+    return false, repairErr
+end
+
+if not changed then
+    -- Another operation repaired the phone after the initial check.
+    return false, 'phone_already_repaired'
+end
+```
+
+Here is a complete minimal, framework-independent server example:
+
+```lua
+RegisterNetEvent('my-phone-shop:server:repair', function()
+    local playerSource = source
+
+    local damage, err =
+        exports['lb-brokenphone']:GetEquippedPhoneDamage(playerSource)
+
+    if not damage then
+        return
+    end
+
+    if damage.damageLevel == 0 and damage.fireLevel == 0 then
+        return
+    end
+
+    -- Validate shop/location/job here on the server.
+    -- Check/remove money or the required item here on the server.
+
+    local success, repairErr, _, changed =
+        exports['lb-brokenphone']:RepairPhone(playerSource)
+
+    if not success then
+        -- Refund the payment/item here if required.
+        return
+    end
+
+    if changed then
+        -- Show a success notification here.
+    end
+end)
+```
+
+The example event belongs to the integrating resource. It must validate every
+request server-side before payment and repair; never trust its client event or
+expose the `lb-brokenphone` export directly to a client.
+
 ## Test commands
 
 All commands are registered server-side. Run them in chat with a leading slash,
@@ -413,8 +506,13 @@ local damage = exports['lb-brokenphone']:GetPhoneDamage(phoneNumber)
 --   fireLevel = 0..2, fireSeed = number, isHacked = boolean,
 --   hackExpiresAt = Unix timestamp (0 means permanent) }
 
-exports['lb-brokenphone']:RepairPhone(source)
-exports['lb-brokenphone']:RepairPhoneByNumber(phoneNumber)
+local equippedDamage, equippedErr, equippedPhoneNumber =
+    exports['lb-brokenphone']:GetEquippedPhoneDamage(source)
+
+local repaired, repairErr, repairedState, changed =
+    exports['lb-brokenphone']:RepairPhone(source)
+local numberRepaired, numberRepairErr, numberRepairedState, numberChanged =
+    exports['lb-brokenphone']:RepairPhoneByNumber(phoneNumber)
 local repaired, repairErr, repairSummary =
     exports['lb-brokenphone']:RepairBulkPhoneDamage(playerSources)
 local allRepaired, allRepairErr, allRepairSummary =
@@ -429,9 +527,13 @@ value. `changed` is false when the phone was already at the event's maximum.
 all-player, and area exports return `success, error, summary`.
 Normal repair exports remove crack and fire damage; dedicated hacked-phone repair
 exports remove only the hack, and dedicated fire-repair exports remove only
-fire damage. They return `success, error`. Bulk, all-player, and area exports
-return `success, error, summary`. `GetPhoneDamage` returns the damage state, or
-`nil, error` when it cannot be loaded.
+fire damage. Normal and fire repair exports return
+`success, error, damage, changed`; `changed` is `false` when no persistence write
+was needed. Existing integrations reading only the first two values remain
+compatible. Bulk, all-player, and area exports return `success, error, summary`.
+`GetPhoneDamage` returns the damage state, or `nil, error` when it cannot be
+loaded. `GetEquippedPhoneDamage` returns `damage, error, phoneNumber` and uses
+`no_equipped_phone` when the player has no equipped LB Phone.
 
 The escalate exports advance an intact phone to light, light to medium, and
 medium to severe; severe remains severe. Applying a lower or equal fixed level
