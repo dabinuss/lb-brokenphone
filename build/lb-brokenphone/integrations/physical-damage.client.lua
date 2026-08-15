@@ -33,7 +33,9 @@ local explosiveWeapons = hashSet({
     'WEAPON_VEHICLE_ROCKET',
     'WEAPON_AIRSTRIKE_ROCKET',
     'WEAPON_PASSENGER_ROCKET',
-    'WEAPON_HELI_CRASH'
+    'WEAPON_HELI_CRASH',
+    'WEAPON_FIREWORK',
+    'WEAPON_EMPLAUNCHER'
 })
 
 local meleeGroups = hashSet({ 'GROUP_UNARMED', 'GROUP_MELEE' })
@@ -105,7 +107,9 @@ AddEventHandler('gameEventTriggered', function(name, args)
         lastCombatVitality = after
         local vitalityLoss = before - after
         if vitalityLoss <= 0 then return end
-        reportPhysicalDamage(cause, vitalityLoss / Config.AutoDamage.damageReference)
+        SetTimeout(Config.AutoDamage.snapshotInterval + 50, function()
+            reportPhysicalDamage(cause, vitalityLoss / Config.AutoDamage.damageReference)
+        end)
     end)
 end)
 

@@ -100,7 +100,7 @@ Config.AutoDamage = {
     successCooldown = 30000, -- Block every automatic cause after one successful phone damage.
     clientDebounce = 1000,   -- Minimum milliseconds between reports of the same cause on a client.
     damageReference = 100,   -- Health/armour loss treated as severity 1.0 for combat damage.
-    snapshotInterval = 200,  -- Server-side player/vehicle sampling interval.
+    snapshotInterval = 200,  -- Delay before the targeted post-weapon-damage verification sample.
     evidenceWindow = 2000,   -- Maximum age of server-observed damage evidence.
     explosionEvidenceRadius = 30.0, -- Required proximity to a server-observed explosion.
 
@@ -163,6 +163,7 @@ Config.AutoFireDamage = {
     networkRateLimit = 2000,  -- Minimum interval between raw incident reports per player.
     cooldown = 45000,         -- One server-side chance roll per player within this interval.
     idlePollInterval = 750,   -- Slower client polling while the player is not burning.
+    requireCauseEvidence = true, -- Require a server-observed fire weapon or nearby explosion.
 
     light = {
         minHealthLoss = 5,
@@ -317,6 +318,8 @@ validateAutoDamageEvent('explosion', Config.AutoDamage.events.explosion)
 assert(type(Config.AutoFireDamage) == 'table', 'Config.AutoFireDamage must be a table')
 assert(type(Config.AutoFireDamage.enabled) == 'boolean', 'Config.AutoFireDamage.enabled must be true or false')
 assert(type(Config.AutoFireDamage.debug) == 'boolean', 'Config.AutoFireDamage.debug must be true or false')
+assert(type(Config.AutoFireDamage.requireCauseEvidence) == 'boolean',
+    'Config.AutoFireDamage.requireCauseEvidence must be true or false')
 assertInteger('Config.AutoFireDamage.pollInterval', Config.AutoFireDamage.pollInterval, 50)
 assertInteger('Config.AutoFireDamage.incidentEndGrace', Config.AutoFireDamage.incidentEndGrace, 0)
 assertInteger('Config.AutoFireDamage.networkRateLimit', Config.AutoFireDamage.networkRateLimit, 0)

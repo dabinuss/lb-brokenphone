@@ -3,6 +3,7 @@ local Evidence = LBBrokenPhoneDamageEvidence
 local attemptCooldowns = {}
 local lastSuccessfulDamage = {}
 local lastNetworkReport = {}
+local lastVerificationByCause = {}
 local pendingDamage = {}
 
 local function debugLog(message, ...)
@@ -94,6 +95,16 @@ RegisterNetEvent('lb-brokenphone:server:physicalDamage', function(cause, severit
     if Shared.elapsed(now, lastNetworkReport[playerSource]) < Config.AutoDamage.networkRateLimit then return end
     lastNetworkReport[playerSource] = now
 
+    local eventConfig = type(cause) == 'string' and Config.AutoDamage.events[cause] or nil
+    if not eventConfig or not eventConfig.enabled then return end
+    local verificationCooldowns = lastVerificationByCause[playerSource]
+    if not verificationCooldowns then
+        verificationCooldowns = {}
+        lastVerificationByCause[playerSource] = verificationCooldowns
+    end
+    if Shared.elapsed(now, verificationCooldowns[cause]) < eventConfig.cooldown then return end
+    verificationCooldowns[cause] = now
+
     local verifiedSeverity, evidenceError = Evidence.verifyPhysical(playerSource, cause, severity)
     if not verifiedSeverity then
         debugLog('source=%d cause=%s result=%s', playerSource, tostring(cause), evidenceError)
@@ -107,6 +118,7 @@ AddEventHandler('playerDropped', function()
     attemptCooldowns[playerSource] = nil
     lastSuccessfulDamage[playerSource] = nil
     lastNetworkReport[playerSource] = nil
+    lastVerificationByCause[playerSource] = nil
     pendingDamage[playerSource] = nil
 end)
 

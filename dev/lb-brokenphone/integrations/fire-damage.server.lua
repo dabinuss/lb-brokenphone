@@ -2,12 +2,22 @@ local Shared = LBBrokenPhoneDamageShared
 local Evidence = LBBrokenPhoneDamageEvidence
 local lastFireAttempt = {}
 local lastNetworkReport = {}
+local lastSessionStart = {}
 local pendingFireDamage = {}
 
 local function debugLog(message, ...)
     if not Config.AutoFireDamage.debug then return end
     print(('[lb-brokenphone][fire-damage] ' .. message):format(...))
 end
+
+RegisterNetEvent('lb-brokenphone:server:fireStarted', function()
+    local playerSource = source
+    if not Config.AutoFireDamage.enabled then return end
+
+    local now = GetGameTimer()
+    if Shared.elapsed(now, lastSessionStart[playerSource]) < Config.AutoFireDamage.cooldown then return end
+    if Evidence.beginFire(playerSource) then lastSessionStart[playerSource] = now end
+end)
 
 local function classifyFireDamage(healthLoss, burnDuration)
     local medium = Config.AutoFireDamage.medium
@@ -82,7 +92,10 @@ RegisterNetEvent('lb-brokenphone:server:fireDamage', function(healthLoss, burnDu
     if not Config.AutoFireDamage.enabled then return end
 
     local now = GetGameTimer()
-    if Shared.elapsed(now, lastNetworkReport[playerSource]) < Config.AutoFireDamage.networkRateLimit then return end
+    if Shared.elapsed(now, lastNetworkReport[playerSource]) < Config.AutoFireDamage.networkRateLimit then
+        Evidence.cancelFire(playerSource)
+        return
+    end
     lastNetworkReport[playerSource] = now
 
     local observedLoss, observedDuration, evidenceError = Evidence.verifyFire(
@@ -101,6 +114,7 @@ AddEventHandler('playerDropped', function()
     local playerSource = source
     lastFireAttempt[playerSource] = nil
     lastNetworkReport[playerSource] = nil
+    lastSessionStart[playerSource] = nil
     pendingFireDamage[playerSource] = nil
 end)
 

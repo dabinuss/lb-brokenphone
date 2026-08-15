@@ -41,8 +41,8 @@ directory contains development files and is not intended for server installation
    installation. JSON persistence must be selected explicitly with
    `Config.Database.mode = 'json'`; the resource never switches persistence
    drivers automatically.
-   Automatic gameplay damage requires OneSync because its client reports are
-   checked against server-side ped/vehicle snapshots and explosion events.
+   Automatic gameplay damage requires OneSync because client reports are
+   checked against server-side weapon, entity, and explosion evidence.
 4. Damage and repair test/admin commands are disabled by default. To enable
    them for administrators, set `Config.Commands.enabled = true`, keep
    `Config.Commands.restricted = true`, and grant ACE access:
@@ -163,9 +163,12 @@ reported when the player actually loses health or armour. A vehicle crash must
 combine sufficient pre-impact speed, sudden speed loss, a collision, and vehicle
 body damage. Falls, water damage, and medical/downed states are not detected.
 
-The client only reports an event type and normalized severity. The server owns
-the whitelist, cooldowns, probability roll, escalation, maximum result level,
-phone lookup, and persistence. Set `Config.AutoDamage.enabled = false` to disable
+The client only reports an event type and normalized severity. Gunshot and melee
+reports must match a recent server-side `weaponDamageEvent`; explosions must
+match a nearby `explosionEvent`; vehicle reports trigger one targeted ped/vehicle
+check. The server owns the whitelist, cooldowns, probability roll, escalation,
+maximum result level, phone lookup, and persistence. Set
+`Config.AutoDamage.enabled = false` to disable
 automatic events without affecting commands, exports, repairs, or manual damage.
 Automatic damage and every escalation API remain limited to crack levels 1-3;
 they can never produce or advance the special hack state.
@@ -179,6 +182,10 @@ Important global settings:
   change, preventing several causes from escalating one incident repeatedly.
 - `clientDebounce`: suppresses duplicate local reports of the same cause.
 - `damageReference`: health/armour loss that represents severity `1.0`.
+- `snapshotInterval`: delay before the targeted post-hit health sample used for
+  `weaponDamageEvent` verification; it is no longer an all-player polling rate.
+- `evidenceWindow`: maximum age of weapon/explosion evidence.
+- `explosionEvidenceRadius`: maximum distance from a server-observed explosion.
 
 Each entry under `Config.AutoDamage.events` has these settings:
 
@@ -211,6 +218,8 @@ Config.AutoFireDamage = {
     incidentEndGrace = 750,
     networkRateLimit = 2000,
     cooldown = 45000,
+    idlePollInterval = 750,
+    requireCauseEvidence = true,
     light = { minHealthLoss = 5, minBurnDuration = 500, chance = 20 },
     medium = { minHealthLoss = 25, minBurnDuration = 3000, chance = 55 }
 }
@@ -221,14 +230,22 @@ Medium is checked first and uses only its own chance; a failed medium roll does
 not fall back to light. Failed attempts consume `cooldown`. Fire levels are not
 cumulative: level 1 renders one light image and level 2 one medium image.
 
+At the beginning of a burn incident the server stores one targeted health
+baseline. The final report is capped by the server-observed health loss and
+elapsed time. With `requireCauseEvidence = true`, the session must additionally
+match a fire-producing `weaponDamageEvent` or a nearby `explosionEvent`. Disable
+that option only when another fire resource creates environmental fires that do
+not produce either server event; health-loss and duration verification remain
+active.
+
 ### Damage integration layout
 
 Gameplay detection is intentionally separated from the persistent phone core:
 
 - `integrations/physical-damage.client.lua` detects combat and vehicle impacts.
 - `integrations/fire-damage.client.lua` tracks burn incidents with adaptive polling.
-- `integrations/damage-evidence.server.lua` keeps the single authoritative
-  vitality/vehicle snapshot stream used to verify both report types.
+- `integrations/damage-evidence.server.lua` collects event-driven weapon and
+  explosion evidence and performs targeted vehicle/fire checks only on demand.
 - `integrations/physical-damage.server.lua` and `fire-damage.server.lua` own
   their respective validation, rate limits, cooldowns, and probability rolls.
 - `integrations/shared.lua` contains only small numeric/time helpers shared by

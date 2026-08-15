@@ -24,6 +24,7 @@ CreateThread(function()
         if onFire then
             if not incident or incident.ped ~= ped or now < incident.startedAt then
                 if incident then reportFireIncident(incident) end
+                TriggerServerEvent('lb-brokenphone:server:fireStarted')
                 incident = {
                     ped = ped,
                     startedAt = now,
