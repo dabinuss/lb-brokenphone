@@ -46,6 +46,12 @@ local function normalizeDamageLevel(level)
     return level
 end
 
+local function normalizeFireLevel(level)
+    level = tonumber(level)
+    if not level or level % 1 ~= 0 or level < 1 or level > 2 then return nil end
+    return level
+end
+
 local function normalizeHackDuration(durationMs)
     if durationMs == nil then durationMs = Config.Hack.defaultDuration end
     durationMs = tonumber(durationMs)
@@ -123,6 +129,8 @@ local function ensureDatabase(callback)
                 `phone_number` VARCHAR(32) NOT NULL,
                 `damage_level` TINYINT UNSIGNED NOT NULL DEFAULT 0,
                 `damage_seed` INT UNSIGNED NOT NULL DEFAULT 0,
+                `fire_level` TINYINT UNSIGNED NOT NULL DEFAULT 0,
+                `fire_seed` INT UNSIGNED NOT NULL DEFAULT 0,
                 `is_hacked` TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,
                 `hack_expires_at` BIGINT UNSIGNED NOT NULL DEFAULT 0,
                 PRIMARY KEY (`phone_number`)
@@ -135,6 +143,8 @@ local function ensureDatabase(callback)
                     return failDatabaseStart(err or 'database_initialization_failed')
                 end
                 local migrations = {
+                    ('ALTER TABLE `%s` ADD COLUMN IF NOT EXISTS `fire_level` TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER `damage_seed`'):format(tableName),
+                    ('ALTER TABLE `%s` ADD COLUMN IF NOT EXISTS `fire_seed` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `fire_level`'):format(tableName),
                     ('ALTER TABLE `%s` ADD COLUMN IF NOT EXISTS `is_hacked` TINYINT(1) UNSIGNED NOT NULL DEFAULT 0 AFTER `damage_seed`'):format(tableName),
                     ('ALTER TABLE `%s` ADD COLUMN IF NOT EXISTS `hack_expires_at` BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER `is_hacked`'):format(tableName)
                 }
@@ -213,12 +223,14 @@ local function loadDamageFromStorage(phoneNumber, callback)
             return callback({
                 damageLevel = legacyHack and 0 or tonumber(row.damageLevel) or 0,
                 damageSeed = legacyHack and 0 or tonumber(row.damageSeed) or 0,
+                fireLevel = tonumber(row.fireLevel) or 0,
+                fireSeed = tonumber(row.fireSeed) or 0,
                 isHacked = legacyHack or row.isHacked == true,
                 hackExpiresAt = tonumber(row.hackExpiresAt) or 0
             })
         end
 
-        query(('SELECT damage_level AS damageLevel, damage_seed AS damageSeed, is_hacked AS isHacked, hack_expires_at AS hackExpiresAt FROM `%s` WHERE phone_number = ? LIMIT 1'):format(tableName), { phoneNumber }, function(rows, err)
+        query(('SELECT damage_level AS damageLevel, damage_seed AS damageSeed, fire_level AS fireLevel, fire_seed AS fireSeed, is_hacked AS isHacked, hack_expires_at AS hackExpiresAt FROM `%s` WHERE phone_number = ? LIMIT 1'):format(tableName), { phoneNumber }, function(rows, err)
             if err then return callback(nil, 'database_query_failed') end
             local row = rows and rows[1]
             if not row then return callback(nil) end
@@ -237,8 +249,8 @@ local function persistDamageState(phoneNumber, state, callback)
         end
 
         local sql = ([=[
-            INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `is_hacked`, `hack_expires_at`)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `fire_level`, `fire_seed`, `is_hacked`, `hack_expires_at`)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
                 `damage_level` = GREATEST(`damage_level`, VALUES(`damage_level`)),
                 `damage_seed` = CASE
@@ -246,7 +258,10 @@ local function persistDamageState(phoneNumber, state, callback)
                     ELSE `damage_seed`
                 END
         ]=]):format(tableName)
-        query(sql, { phoneNumber, state.damageLevel, state.damageSeed, state.isHacked and 1 or 0, state.hackExpiresAt }, function(_, err)
+        query(sql, {
+            phoneNumber, state.damageLevel, state.damageSeed, state.fireLevel, state.fireSeed,
+            state.isHacked and 1 or 0, state.hackExpiresAt
+        }, function(_, err)
             if err then return callback(false, 'database_query_failed') end
             callback(true)
         end)
@@ -257,7 +272,7 @@ local function persistWholeState(phoneNumber, state, callback)
     ensureDatabase(function(ready, databaseError)
         if not ready then return callback(false, databaseError or 'database_unavailable') end
         if databaseMode == 'json' then
-            if state.damageLevel == 0 and not state.isHacked then
+            if state.damageLevel == 0 and state.fireLevel == 0 and not state.isHacked then
                 fallbackData[phoneNumber] = nil
             else
                 fallbackData[phoneNumber] = state
@@ -267,20 +282,22 @@ local function persistWholeState(phoneNumber, state, callback)
         end
 
         local sql, params
-        if state.damageLevel == 0 and not state.isHacked then
+        if state.damageLevel == 0 and state.fireLevel == 0 and not state.isHacked then
             sql = ('DELETE FROM `%s` WHERE phone_number = ?'):format(tableName)
             params = { phoneNumber }
         else
             sql = ([=[
-                INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `is_hacked`, `hack_expires_at`)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `fire_level`, `fire_seed`, `is_hacked`, `hack_expires_at`)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE
                     `damage_level` = VALUES(`damage_level`),
                     `damage_seed` = VALUES(`damage_seed`),
+                    `fire_level` = VALUES(`fire_level`),
+                    `fire_seed` = VALUES(`fire_seed`),
                     `is_hacked` = VALUES(`is_hacked`),
                     `hack_expires_at` = VALUES(`hack_expires_at`)
             ]=]):format(tableName)
-            params = { phoneNumber, state.damageLevel, state.damageSeed, state.isHacked and 1 or 0, state.hackExpiresAt }
+            params = { phoneNumber, state.damageLevel, state.damageSeed, state.fireLevel, state.fireSeed, state.isHacked and 1 or 0, state.hackExpiresAt }
         end
         query(sql, params, function(_, err)
             if err then return callback(false, 'database_query_failed') end
@@ -309,11 +326,14 @@ end
 
 local function copyDamageState(state)
     local damageLevel = math.max(0, math.min(3, tonumber(state and state.damageLevel) or 0))
+    local fireLevel = math.max(0, math.min(2, tonumber(state and state.fireLevel) or 0))
     local isHacked = state and (state.isHacked == true or tonumber(state.isHacked) == 1) or false
     local hackExpiresAt = math.max(0, tonumber(state and state.hackExpiresAt) or 0)
     return {
         damageLevel = damageLevel,
         damageSeed = damageLevel > 0 and tonumber(state and state.damageSeed) or 0,
+        fireLevel = fireLevel,
+        fireSeed = fireLevel > 0 and tonumber(state and state.fireSeed) or 0,
         isHacked = isHacked,
         hackExpiresAt = isHacked and hackExpiresAt or 0
     }
@@ -381,6 +401,8 @@ local function sendDamageState(playerSource, phoneNumber, state)
         phoneNumber,
         state.damageLevel,
         state.damageSeed,
+        state.fireLevel,
+        state.fireSeed,
         state.isHacked,
         state.hackExpiresAt
     )
@@ -446,6 +468,8 @@ local function applyByNumberUnlocked(phoneNumber, level, cause)
     local state = {
         damageLevel = level,
         damageSeed = current.damageSeed > 0 and current.damageSeed or math.random(1, 2147483647),
+        fireLevel = current.fireLevel,
+        fireSeed = current.fireSeed,
         isHacked = current.isHacked,
         hackExpiresAt = current.hackExpiresAt
     }
@@ -468,6 +492,48 @@ local function repairByNumberUnlocked(phoneNumber)
     local state = copyDamageState(current)
     state.damageLevel = 0
     state.damageSeed = 0
+    state.fireLevel = 0
+    state.fireSeed = 0
+    local success, err = awaitResult(function(done) persistWholeState(phoneNumber, state, done) end)
+    if not success then return false, err end
+    damageByPhone[phoneNumber] = state
+    notifyPhoneUsers(phoneNumber, state)
+    return true
+end
+
+local function applyFireByNumberUnlocked(phoneNumber, level, cause)
+    phoneNumber = normalizePhoneNumber(phoneNumber)
+    level = normalizeFireLevel(level)
+    if not phoneNumber then return false, 'invalid_phone_number' end
+    if not level then return false, 'invalid_fire_level' end
+
+    local current, loadError = getCachedDamageUnlocked(phoneNumber)
+    if loadError then return false, loadError end
+    if level <= current.fireLevel then
+        notifyPhoneUsers(phoneNumber, current)
+        return true, nil, current, false
+    end
+
+    local state = copyDamageState(current)
+    state.fireLevel = level
+    state.fireSeed = current.fireSeed > 0 and current.fireSeed or math.random(1, 2147483647)
+    local success, err = awaitResult(function(done) persistWholeState(phoneNumber, state, done) end)
+    if not success then return false, err end
+
+    damageByPhone[phoneNumber] = state
+    notifyPhoneUsers(phoneNumber, state)
+    debugLog('Fire damage applied', phoneNumber, level, cause or 'unknown')
+    return true, nil, copyDamageState(state), true
+end
+
+local function repairFireByNumberUnlocked(phoneNumber)
+    phoneNumber = normalizePhoneNumber(phoneNumber)
+    if not phoneNumber then return false, 'invalid_phone_number' end
+    local current, loadError = getCachedDamageUnlocked(phoneNumber)
+    if loadError then return false, loadError end
+    local state = copyDamageState(current)
+    state.fireLevel = 0
+    state.fireSeed = 0
     local success, err = awaitResult(function(done) persistWholeState(phoneNumber, state, done) end)
     if not success then return false, err end
     damageByPhone[phoneNumber] = state
@@ -581,6 +647,18 @@ local function repairByNumber(phoneNumber)
     end)
 end
 
+local function applyFireByNumber(phoneNumber, level, cause)
+    return runManaged(function()
+        return applyFireByNumberUnlocked(phoneNumber, level, cause)
+    end)
+end
+
+local function repairFireByNumber(phoneNumber)
+    return runManaged(function()
+        return repairFireByNumberUnlocked(phoneNumber)
+    end)
+end
+
 local function repairHackedByNumber(phoneNumber)
     return runManaged(function()
         local current, err = getCachedDamageUnlocked(phoneNumber)
@@ -616,6 +694,13 @@ local function applyPhoneDamageDelta(playerSource, escalation, maxResultLevel, c
     if not phoneNumber then return false, 'no_equipped_phone' end
     setActivePhone(playerSource, phoneNumber)
     return applyDamageDeltaByNumber(phoneNumber, escalation, maxResultLevel, cause)
+end
+
+local function applyPhoneFire(playerSource, level, cause)
+    local phoneNumber = resolveEquippedPhone(playerSource)
+    if not phoneNumber then return false, 'no_equipped_phone' end
+    setActivePhone(playerSource, phoneNumber)
+    return applyFireByNumber(phoneNumber, level, cause)
 end
 
 local function collectBulkPhones(sources)
@@ -684,7 +769,7 @@ local function hydrateDamageCacheUnlocked(phoneNumbers)
             params[#params + 1] = missing[index]
         end
 
-        local sql = ('SELECT phone_number AS phoneNumber, damage_level AS damageLevel, damage_seed AS damageSeed, is_hacked AS isHacked, hack_expires_at AS hackExpiresAt FROM `%s` WHERE phone_number IN (%s)')
+        local sql = ('SELECT phone_number AS phoneNumber, damage_level AS damageLevel, damage_seed AS damageSeed, fire_level AS fireLevel, fire_seed AS fireSeed, is_hacked AS isHacked, hack_expires_at AS hackExpiresAt FROM `%s` WHERE phone_number IN (%s)')
             :format(tableName, table.concat(placeholders, ', '))
         local rows, queryError = awaitResult(function(done)
             query(sql, params, done)
@@ -739,16 +824,18 @@ local function persistBulkDamageUnlocked(changes)
         local params = {}
         for index = first, last do
             local change = changes[index]
-            values[#values + 1] = '(?, ?, ?, ?, ?)'
+            values[#values + 1] = '(?, ?, ?, ?, ?, ?, ?)'
             params[#params + 1] = change.phoneNumber
             params[#params + 1] = change.state.damageLevel
             params[#params + 1] = change.state.damageSeed
+            params[#params + 1] = change.state.fireLevel
+            params[#params + 1] = change.state.fireSeed
             params[#params + 1] = change.state.isHacked and 1 or 0
             params[#params + 1] = change.state.hackExpiresAt
         end
 
         local sql = ([=[
-            INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `is_hacked`, `hack_expires_at`) VALUES %s
+            INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `fire_level`, `fire_seed`, `is_hacked`, `hack_expires_at`) VALUES %s
             ON DUPLICATE KEY UPDATE
                 `damage_level` = GREATEST(`damage_level`, VALUES(`damage_level`)),
                 `damage_seed` = CASE
@@ -795,15 +882,17 @@ local function persistBulkHackUnlocked(changes)
         local values, params = {}, {}
         for index = first, last do
             local change = changes[index]
-            values[#values + 1] = '(?, ?, ?, ?, ?)'
+            values[#values + 1] = '(?, ?, ?, ?, ?, ?, ?)'
             params[#params + 1] = change.phoneNumber
             params[#params + 1] = change.state.damageLevel
             params[#params + 1] = change.state.damageSeed
+            params[#params + 1] = change.state.fireLevel
+            params[#params + 1] = change.state.fireSeed
             params[#params + 1] = 1
             params[#params + 1] = change.state.hackExpiresAt
         end
         local sql = ([=[
-            INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `is_hacked`, `hack_expires_at`) VALUES %s
+            INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `fire_level`, `fire_seed`, `is_hacked`, `hack_expires_at`) VALUES %s
             ON DUPLICATE KEY UPDATE
                 `is_hacked` = 1,
                 `hack_expires_at` = VALUES(`hack_expires_at`)
@@ -862,6 +951,8 @@ local function persistBulkRepairUnlocked(phoneNumbers)
             local state = copyDamageState(damageByPhone[phoneNumber])
             state.damageLevel = 0
             state.damageSeed = 0
+            state.fireLevel = 0
+            state.fireSeed = 0
             fallbackData[phoneNumber] = state.isHacked and state or nil
         end
         if not saveFallbackData() then return false, 'persistence_failed', 0 end
@@ -870,6 +961,8 @@ local function persistBulkRepairUnlocked(phoneNumbers)
             local state = copyDamageState(damageByPhone[phoneNumber])
             state.damageLevel = 0
             state.damageSeed = 0
+            state.fireLevel = 0
+            state.fireSeed = 0
             damageByPhone[phoneNumber] = state
             notifyPhoneUsers(phoneNumber, state)
         end
@@ -888,7 +981,7 @@ local function persistBulkRepairUnlocked(phoneNumbers)
         end
 
         local phoneList = table.concat(placeholders, ', ')
-        local updateSql = ('UPDATE `%s` SET damage_level = 0, damage_seed = 0 WHERE phone_number IN (%s) AND is_hacked = 1')
+        local updateSql = ('UPDATE `%s` SET damage_level = 0, damage_seed = 0, fire_level = 0, fire_seed = 0 WHERE phone_number IN (%s) AND is_hacked = 1')
             :format(tableName, phoneList)
         local deleteSql = ('DELETE FROM `%s` WHERE phone_number IN (%s) AND is_hacked = 0')
             :format(tableName, phoneList)
@@ -907,6 +1000,8 @@ local function persistBulkRepairUnlocked(phoneNumbers)
             local state = copyDamageState(damageByPhone[phoneNumber])
             state.damageLevel = 0
             state.damageSeed = 0
+            state.fireLevel = 0
+            state.fireSeed = 0
             damageByPhone[phoneNumber] = state
             notifyPhoneUsers(phoneNumber, state)
             applied = applied + 1
@@ -935,6 +1030,8 @@ local function processBulkDamage(sources, level, cause, escalate)
                     state = {
                         damageLevel = nextLevel,
                         damageSeed = current.damageSeed > 0 and current.damageSeed or math.random(1, 2147483647),
+                        fireLevel = current.fireLevel,
+                        fireSeed = current.fireSeed,
                         isHacked = current.isHacked,
                         hackExpiresAt = current.hackExpiresAt
                     }
@@ -1131,6 +1228,12 @@ local function hasDamagePermission(playerSource)
         or (Config.Commands.legacySetDamage and IsPlayerAceAllowed(playerSource, ('command.%s'):format(Config.Commands.legacySetDamage)))
 end
 
+local function hasFirePermission(playerSource)
+    if playerSource == 0 then return true end
+    if not Config.Commands.restricted then return true end
+    return IsPlayerAceAllowed(playerSource, ('command.%s'):format(Config.Commands.fire))
+end
+
 local function hasRepairPermission(playerSource)
     if playerSource == 0 then return true end
     if not Config.Commands.restricted then return true end
@@ -1231,6 +1334,8 @@ exports('ApplyPhoneDamage', function(playerSource, level, cause, hackDurationMs)
 end)
 
 exports('ApplyPhoneDamageByNumber', applyByNumber)
+exports('ApplyPhoneFire', applyPhoneFire)
+exports('ApplyPhoneFireByNumber', applyFireByNumber)
 exports('ApplyBulkPhoneDamage', applyBulkDamage)
 exports('EscalateBulkPhoneDamage', escalateBulkDamage)
 exports('ApplyPhoneDamageToAll', applyPhoneDamageToAll)
@@ -1251,6 +1356,7 @@ exports('ApplyPhoneDamageDeltaByNumber', applyDamageDeltaByNumber)
 
 LBBrokenPhoneCore = LBBrokenPhoneCore or {}
 LBBrokenPhoneCore.applyPhoneDamageDelta = applyPhoneDamageDelta
+LBBrokenPhoneCore.applyPhoneFire = applyPhoneFire
 
 exports('GetPhoneDamage', function(phoneNumber)
     return runManaged(function()
@@ -1277,6 +1383,13 @@ exports('RepairPhone', function(playerSource)
 end)
 
 exports('RepairPhoneByNumber', repairByNumber)
+exports('RepairPhoneFire', function(playerSource)
+    local phoneNumber = resolveEquippedPhone(playerSource)
+    if not phoneNumber then return false, 'no_equipped_phone' end
+    setActivePhone(playerSource, phoneNumber)
+    return repairFireByNumber(phoneNumber)
+end)
+exports('RepairPhoneFireByNumber', repairFireByNumber)
 exports('RepairHackedPhone', function(playerSource)
     local phoneNumber = resolveEquippedPhone(playerSource)
     if not phoneNumber then return false, 'no_equipped_phone' end
@@ -1293,6 +1406,33 @@ exports('HackAllPhones', hackAllPhones)
 exports('HackPhonesInArea', hackPhonesInArea)
 
 if Config.Commands.enabled then
+    local function fireCommand(playerSource, args)
+        if not hasFirePermission(playerSource) then
+            return commandReply(playerSource, 'You do not have permission to use this command.', false)
+        end
+
+        local level = normalizeFireLevel(args[1])
+        if not level then
+            return commandReply(playerSource, ('Usage: /%s <1-2> [phoneNumber]'):format(Config.Commands.fire), false)
+        end
+
+        local equippedPhone = resolveEquippedPhone(playerSource)
+        local requestedPhone = normalizePhoneNumber(args[2])
+        if playerSource > 0 and not Config.Commands.restricted and requestedPhone and requestedPhone ~= equippedPhone then
+            return commandReply(playerSource, 'You can only test the phone you currently have equipped.', false)
+        end
+        local phoneNumber = requestedPhone or equippedPhone
+        if not phoneNumber then
+            return commandReply(playerSource, 'No equipped phone; console usage requires a phone number.', false)
+        end
+
+        if playerSource > 0 then setActivePhone(playerSource, equippedPhone) end
+        local success, err, result = applyFireByNumber(phoneNumber, level, 'test_command_fire')
+        commandReply(playerSource, success
+            and ('%s has fire damage level %d (seed %d).'):format(phoneNumber, result.fireLevel, result.fireSeed)
+            or ('Fire damage failed: %s'):format(err or 'unknown_error'), success)
+    end
+
     local function damageCommand(playerSource, args)
         if not hasDamagePermission(playerSource) then
             return commandReply(playerSource, 'You do not have permission to use this command.', false)
@@ -1485,6 +1625,7 @@ if Config.Commands.enabled then
     RegisterCommand(Config.Commands.setDamageAll, damageAllCommand, false)
     RegisterCommand(Config.Commands.setDamageArea, damageAreaCommand, false)
     RegisterCommand(Config.Commands.setDamageColor, damageColorCommand, false)
+    RegisterCommand(Config.Commands.fire, fireCommand, false)
     RegisterCommand(Config.Commands.repair, repairCommand, false)
     RegisterCommand(Config.Commands.unhack, unhackCommand, false)
     RegisterCommand(Config.Commands.repairAll, repairAllCommand, false)

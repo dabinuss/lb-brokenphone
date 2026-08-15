@@ -61,6 +61,11 @@
     let lastData = {
         damageLevel: 0,
         damageSeed: 0,
+        fireLevel: 0,
+        fireSeed: 0,
+        fireImages: { light: [], medium: [] },
+        fireBlockInput: true,
+        fireInputBlockThreshold: 0.62,
         damageColor: 'black',
         state: 'closed',
         hackImage: 'hack/ahahah.gif',
@@ -73,6 +78,7 @@
     let hackAudioPath = null;
     let lastHackSoundAt = -Infinity;
     let hackWasVisible = false;
+    let fireInputMask = null;
     let typeToken = 0;
     let renderToken = 0;
     let targetWindow = null;
@@ -118,7 +124,7 @@
         return ((value ^ (value >>> 16)) >>> 0) / 4294967296;
     }
 
-    function loadCrackImage(path) {
+    function loadAssetImage(path) {
         const url = `${assetRoot}${path}`;
         if (!imageCache.has(url)) {
             imageCache.set(url, new Promise(function (resolve, reject) {
@@ -130,6 +136,8 @@
         }
         return imageCache.get(url);
     }
+
+    const loadCrackImage = loadAssetImage;
 
     function getPhoneContainer() {
         return targetDocument?.querySelector('.phone-container') || null;
@@ -283,6 +291,22 @@
             });
             overlay.appendChild(canvas);
         }
+        let fireCanvas = overlay.querySelector('#lb-brokenphone-fire');
+        if (!fireCanvas) {
+            fireCanvas = targetDocument.createElement('canvas');
+            fireCanvas.id = 'lb-brokenphone-fire';
+            Object.assign(fireCanvas.style, {
+                display: 'none',
+                position: 'absolute',
+                inset: '0',
+                zIndex: '5',
+                width: '100%',
+                height: '100%',
+                mixBlendMode: 'multiply',
+                pointerEvents: 'none'
+            });
+            overlay.appendChild(fireCanvas);
+        }
         let hackScreen = overlay.querySelector('#lb-brokenphone-hack');
         if (!hackScreen) {
             hackScreen = targetDocument.createElement('div');
@@ -411,6 +435,7 @@
     function detachFromCurrentContainer() {
         if (resizeObserver) resizeObserver.disconnect();
         resizeObserver = null;
+        fireInputMask = null;
         removeOverlay();
         currentPhoneContainer = null;
     }
@@ -423,6 +448,37 @@
 
     function blockHackKeyboard(event) {
         if (!hackActive()) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    }
+
+    function getEventPoint(event) {
+        const touch = event.touches?.[0] || event.changedTouches?.[0];
+        if (touch) return { x: touch.clientX, y: touch.clientY };
+        if (!Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) return null;
+        return { x: event.clientX, y: event.clientY };
+    }
+
+    function hitsBlockedFirePixel(event) {
+        if (!fireInputMask || lastData.fireBlockInput !== true || lastData.state === 'closed') return false;
+        const phone = currentPhoneContainer;
+        const point = getEventPoint(event);
+        if (!phone || !point) return false;
+
+        const rect = phone.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0
+            || point.x < rect.left || point.x >= rect.right
+            || point.y < rect.top || point.y >= rect.bottom) return false;
+
+        const x = Math.min(fireInputMask.width - 1,
+            Math.max(0, Math.floor((point.x - rect.left) / rect.width * fireInputMask.width)));
+        const y = Math.min(fireInputMask.height - 1,
+            Math.max(0, Math.floor((point.y - rect.top) / rect.height * fireInputMask.height)));
+        return fireInputMask.pixels[y * fireInputMask.width + x] === 1;
+    }
+
+    function blockDamagedInput(event) {
+        if (!hitsBlockedFirePixel(event)) return;
         event.preventDefault();
         event.stopImmediatePropagation();
     }
@@ -538,21 +594,83 @@
         overlay.style.display = 'block';
     }
 
+    async function composeFire(canvas, level, seed, imagesByLevel, token, width, height) {
+        const profile = level === 2 ? 'medium' : 'light';
+        const candidates = Array.isArray(imagesByLevel?.[profile])
+            ? imagesByLevel[profile].filter(function (path) { return typeof path === 'string' && path.length > 0; })
+            : [];
+        const imagesKey = JSON.stringify(candidates);
+
+        if (canvas.width !== width) canvas.width = width;
+        if (canvas.height !== height) canvas.height = height;
+        const context = canvas.getContext('2d');
+        context.clearRect(0, 0, width, height);
+        fireInputMask = null;
+
+        if (candidates.length === 0) {
+            canvas.dataset.fireLevel = String(level);
+            canvas.dataset.fireSeed = String(seed);
+            canvas.dataset.fireImages = imagesKey;
+            canvas.dataset.width = String(width);
+            canvas.dataset.height = String(height);
+            return;
+        }
+
+        const path = candidates[Math.floor(random(seed + level * phaseSeedStep) * candidates.length)];
+        const image = await loadAssetImage(path);
+        if (token !== renderToken || !canvas.isConnected) return;
+
+        context.globalCompositeOperation = 'source-over';
+        context.fillStyle = '#fff';
+        context.fillRect(0, 0, width, height);
+        context.globalCompositeOperation = 'multiply';
+        context.drawImage(image, 0, 0, width, height);
+
+        // Fire assets may have an opaque white background. Convert white to
+        // transparency while preserving coloured scorch and heat pixels.
+        const imageData = context.getImageData(0, 0, width, height);
+        const pixels = imageData.data;
+        const inputMaskPixels = new Uint8Array(width * height);
+        const inputThreshold = Math.max(0, Math.min(1,
+            Number(lastData.fireInputBlockThreshold) || 0));
+        for (let index = 0; index < pixels.length; index += 4) {
+            const distanceFromWhite = 255 - Math.min(pixels[index], pixels[index + 1], pixels[index + 2]);
+            const fireAlpha = Math.max(0, Math.min(255, (distanceFromWhite - 5) * 1.25));
+            const luminance = (pixels[index] * 0.2126) + (pixels[index + 1] * 0.7152)
+                + (pixels[index + 2] * 0.0722);
+            pixels[index + 3] = fireAlpha;
+            inputMaskPixels[index / 4] = fireAlpha > 32 && (1 - luminance / 255) >= inputThreshold ? 1 : 0;
+        }
+        context.putImageData(imageData, 0, 0);
+        if (token !== renderToken || !canvas.isConnected) return;
+        fireInputMask = { pixels: inputMaskPixels, width, height };
+        context.globalCompositeOperation = 'source-over';
+        canvas.dataset.fireLevel = String(level);
+        canvas.dataset.fireSeed = String(seed);
+        canvas.dataset.fireImages = imagesKey;
+        canvas.dataset.width = String(width);
+        canvas.dataset.height = String(height);
+    }
+
     function render() {
         const overlay = ensureOverlay(currentPhoneContainer);
         if (!overlay) return;
         const canvas = overlay.querySelector('#lb-brokenphone-canvas');
         const shadowCanvas = overlay.querySelector('#lb-brokenphone-crack-shadow');
         const highlightCanvas = overlay.querySelector('#lb-brokenphone-crack-highlight');
+        const fireCanvas = overlay.querySelector('#lb-brokenphone-fire');
         const hackScreen = overlay.querySelector('#lb-brokenphone-hack');
         const hackImage = hackScreen?.querySelector('#lb-brokenphone-hack-image');
         const hackTextEl = hackScreen?.querySelector('#lb-brokenphone-hack-text');
         const level = Math.max(0, Math.min(3, Number(lastData.damageLevel) || 0));
+        const fireLevel = Math.max(0, Math.min(2, Number(lastData.fireLevel) || 0));
         const hacked = lastData.isHacked === true;
         overlay.style.pointerEvents = touchFaultActive || hacked ? 'auto' : 'none';
         const seed = Number(lastData.damageSeed) || 1;
+        const fireSeed = Number(lastData.fireSeed) || 1;
+        const fireImages = lastData.fireImages || { light: [], medium: [] };
         const damageColor = lastData.damageColor === 'white' ? 'white' : 'black';
-        const visible = (level > 0 || hacked) && lastData.state !== 'closed';
+        const visible = (level > 0 || fireLevel > 0 || hacked) && lastData.state !== 'closed';
         overlay.style.filter = 'none';
         overlay.style.mixBlendMode = 'normal';
         overlay.style.backgroundColor = 'transparent';
@@ -560,17 +678,20 @@
         
         renderToken += 1;
         if (!visible) {
+            fireInputMask = null;
             hackWasVisible = false;
             overlay.style.display = 'none';
             canvas.style.display = 'none';
             shadowCanvas.style.display = 'none';
             highlightCanvas.style.display = 'none';
+            fireCanvas.style.display = 'none';
             if (hackScreen) hackScreen.style.display = 'none';
             stopHackSound();
             const context = canvas.getContext('2d');
             context.clearRect(0, 0, canvas.width, canvas.height);
             shadowCanvas.getContext('2d').clearRect(0, 0, shadowCanvas.width, shadowCanvas.height);
             highlightCanvas.getContext('2d').clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
+            fireCanvas.getContext('2d').clearRect(0, 0, fireCanvas.width, fireCanvas.height);
             canvas.dataset.phases = '0';
             canvas.dataset.damageLevel = '0';
             canvas.dataset.damageSeed = '0';
@@ -598,52 +719,56 @@
             stopHackSound();
         }
 
-        if (level === 0) {
-            canvas.style.display = 'none';
-            shadowCanvas.style.display = 'none';
-            highlightCanvas.style.display = 'none';
-            overlay.style.display = 'block';
-            return;
-        }
-
-        canvas.style.display = 'block';
-        shadowCanvas.style.display = 'block';
-        highlightCanvas.style.display = 'block';
-
         const pixelRatio = Math.min(Number(targetWindow && targetWindow.devicePixelRatio) || 1, 2);
         const displayWidth = overlay.parentElement.clientWidth || overlay.clientWidth || 290;
         const displayHeight = overlay.parentElement.clientHeight || overlay.clientHeight || 585;
         const width = Math.max(1, Math.round(displayWidth * pixelRatio));
         const height = Math.max(1, Math.round(displayHeight * pixelRatio));
-        const renderedLevel = Number(canvas.dataset.damageLevel) || 0;
-        const renderedSeed = Number(canvas.dataset.damageSeed) || 0;
-        const renderedColor = canvas.dataset.damageColor || 'black';
-        const renderedWidth = Number(canvas.dataset.width) || 0;
-        const renderedHeight = Number(canvas.dataset.height) || 0;
-        const exactMatch = renderedLevel === level
-            && renderedSeed === seed
-            && renderedColor === damageColor
-            && renderedWidth === width
-            && renderedHeight === height;
-        if (exactMatch) {
-            overlay.style.display = 'block';
-            return;
+        const token = renderToken;
+
+        if (level === 0) {
+            canvas.style.display = 'none';
+            shadowCanvas.style.display = 'none';
+            highlightCanvas.style.display = 'none';
+        } else {
+            canvas.style.display = 'block';
+            shadowCanvas.style.display = 'block';
+            highlightCanvas.style.display = 'block';
+            const crackMatches = Number(canvas.dataset.damageLevel) === level
+                && Number(canvas.dataset.damageSeed) === seed
+                && canvas.dataset.damageColor === damageColor
+                && Number(canvas.dataset.width) === width
+                && Number(canvas.dataset.height) === height;
+            if (!crackMatches) {
+                composeDamage(canvas, level, seed, damageColor, token, width, height).catch(reportLoadError);
+            }
         }
 
-        const frameIsCompatible = renderedSeed === seed
-            && renderedColor === damageColor
-            && renderedWidth === width
-            && renderedHeight === height
-            && renderedLevel > 0
-            && renderedLevel <= level;
-        overlay.style.display = frameIsCompatible ? 'block' : 'none';
-        const token = renderToken;
-        composeDamage(canvas, level, seed, damageColor, token, width, height).catch(function (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            if (reportedLoadErrors.has(message)) return;
-            reportedLoadErrors.add(message);
-            console.warn('[lb-brokenphone]', message);
-        });
+        if (fireLevel === 0) {
+            fireInputMask = null;
+            fireCanvas.style.display = 'none';
+        } else {
+            fireCanvas.style.display = 'block';
+            const profile = fireLevel === 2 ? 'medium' : 'light';
+            const configuredImages = Array.isArray(fireImages[profile]) ? fireImages[profile] : [];
+            const fireMatches = Number(fireCanvas.dataset.fireLevel) === fireLevel
+                && Number(fireCanvas.dataset.fireSeed) === fireSeed
+                && fireCanvas.dataset.fireImages === JSON.stringify(configuredImages)
+                && Number(fireCanvas.dataset.width) === width
+                && Number(fireCanvas.dataset.height) === height
+                && fireInputMask !== null;
+            if (!fireMatches) {
+                composeFire(fireCanvas, fireLevel, fireSeed, fireImages, token, width, height).catch(reportLoadError);
+            }
+        }
+        overlay.style.display = 'block';
+    }
+
+    function reportLoadError(error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (reportedLoadErrors.has(message)) return;
+        reportedLoadErrors.add(message);
+        console.warn('[lb-brokenphone]', message);
     }
 
     function scheduleRender() {
@@ -688,6 +813,10 @@
         ['keydown', 'keyup', 'keypress'].forEach(function (type) {
             targetWindow.addEventListener(type, blockHackKeyboard, true);
         });
+        ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick',
+            'touchstart', 'touchend', 'contextmenu', 'wheel'].forEach(function (type) {
+            targetWindow.addEventListener(type, blockDamagedInput, { capture: true, passive: false });
+        });
         phoneHostObserver = new MutationObserver(checkPhoneContainer);
         phoneHostObserver.observe(targetDocument.documentElement, { childList: true, subtree: true });
         checkPhoneContainer();
@@ -697,6 +826,10 @@
         if (observedWindow) {
             ['keydown', 'keyup', 'keypress'].forEach(function (type) {
                 observedWindow.removeEventListener(type, blockHackKeyboard, true);
+            });
+            ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click', 'dblclick',
+                'touchstart', 'touchend', 'contextmenu', 'wheel'].forEach(function (type) {
+                observedWindow.removeEventListener(type, blockDamagedInput, true);
             });
         }
         if (phoneHostObserver) phoneHostObserver.disconnect();

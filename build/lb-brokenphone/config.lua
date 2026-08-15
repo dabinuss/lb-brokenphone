@@ -19,6 +19,31 @@ Config.Hack = {
     expiryRetryDelay = 5000    -- Retry delay when clearing an expired hack could not be persisted.
 }
 
+-- Fire damage is independent from cracks and hacks. Asset paths are relative
+-- to html; keep light and medium variants in their matching fire directories.
+Config.Fire = {
+    blockInput = true,              -- Prevent mouse/touch input on strongly burned pixels.
+    inputBlockThreshold = 0.62,     -- Required darkness from 0.0 (everything) to 1.0 (pure black only).
+    images = {
+        light = {
+            'fire/light/firelight1.webp',
+            'fire/light/firelight2.webp',
+            'fire/light/firelight3.webp',
+            'fire/light/firelight4.webp',
+            'fire/light/firelight5.webp',
+            'fire/light/firelight6.webp'
+        },
+        medium = {
+            'fire/medium/firemedium1.webp',
+            'fire/medium/firemedium2.webp',
+            'fire/medium/firemedium3.webp',
+            'fire/medium/firemedium4.webp',
+            'fire/medium/firemedium5.webp',
+            'fire/medium/firemedium6.webp'
+        }
+    }
+}
+
 Config.Database = {
     mode = 'mysql',                         -- Explicit persistence driver: 'mysql' or 'json'.
     tableName = 'phone_damage',              -- SQL table used for persistent phone damage.
@@ -122,6 +147,28 @@ Config.AutoDamage = {
     }
 }
 
+-- Automatic fire damage is measured per burn incident. Light and medium are
+-- exclusive states: medium replaces light visually instead of adding to it.
+Config.AutoFireDamage = {
+    enabled = true,
+    debug = false,
+    pollInterval = 200,       -- Client interval for detecting fire and tracking health.
+    incidentEndGrace = 750,   -- Wait for delayed fire ticks after the flames stop.
+    networkRateLimit = 2000,  -- Minimum interval between raw incident reports per player.
+    cooldown = 45000,         -- One server-side chance roll per player within this interval.
+
+    light = {
+        minHealthLoss = 5,
+        minBurnDuration = 500,
+        chance = 20
+    },
+    medium = {
+        minHealthLoss = 25,
+        minBurnDuration = 3000,
+        chance = 55
+    }
+}
+
 Config.Commands = {
     enabled = false,                        -- Register test/admin commands; production exports remain available when false.
     restricted = true,                     -- Require matching ACE permissions for damage and repair commands.
@@ -130,9 +177,10 @@ Config.Commands = {
     setDamageAll = 'phonedamageall',        -- ACE-only command that damages every player's currently equipped phone.
     setDamageArea = 'phonedamagearea',      -- ACE-only command that damages equipped phones around the executing player.
     setDamageColor = 'phonedamagecolor',    -- Global color command; always requires command.phonedamagecolor ACE.
-    repair = 'phonerepair',                 -- Command used to remove physical crack damage while preserving a hack.
+    fire = 'phonefire',                     -- Command used to apply light (1) or medium (2) display fire damage.
+    repair = 'phonerepair',                 -- Command used to remove crack and fire damage while preserving a hack.
     unhack = 'phoneunhack',                 -- Command that removes only the hack and preserves physical display damage.
-    repairAll = 'phonerepairall',           -- ACE-only command that repairs physical damage on all equipped phones.
+    repairAll = 'phonerepairall',           -- ACE-only command that repairs crack and fire damage on all equipped phones.
     legacySetDamage = 'brokenphone',        -- Backward-compatible damage alias; set to false to disable.
     legacyRepair = 'brokenphonerepair'      -- Backward-compatible repair alias; set to false to disable.
 }
@@ -197,6 +245,18 @@ assertInteger('Config.Hack.maxDuration', Config.Hack.maxDuration, 0)
 assertInteger('Config.Hack.expiryRetryDelay', Config.Hack.expiryRetryDelay, 1000)
 assert(Config.Hack.defaultDuration <= Config.Hack.maxDuration,
     'Config.Hack.defaultDuration must not exceed Config.Hack.maxDuration')
+assert(type(Config.Fire) == 'table', 'Config.Fire must be a table')
+assert(type(Config.Fire.blockInput) == 'boolean', 'Config.Fire.blockInput must be true or false')
+assertNumberRange('Config.Fire.inputBlockThreshold', Config.Fire.inputBlockThreshold, 0, 1)
+assert(type(Config.Fire.images) == 'table', 'Config.Fire.images must be a table')
+for _, profile in ipairs({ 'light', 'medium' }) do
+    local images = Config.Fire.images[profile]
+    assert(type(images) == 'table', ('Config.Fire.images.%s must be a table'):format(profile))
+    for index = 1, #images do
+        assert(type(images[index]) == 'string' and images[index] ~= '',
+            ('Config.Fire.images.%s[%d] must be a non-empty html-relative path'):format(profile, index))
+    end
+end
 assert(type(Config.Debug) == 'boolean', 'Config.Debug must be true or false')
 assert(type(Config.Database) == 'table', 'Config.Database must be a table')
 assert(Config.Database.mode == 'mysql' or Config.Database.mode == 'json',
@@ -241,6 +301,25 @@ validateAutoDamageEvent('gunshot', Config.AutoDamage.events.gunshot)
 validateAutoDamageEvent('melee', Config.AutoDamage.events.melee)
 validateAutoDamageEvent('vehicle_crash', Config.AutoDamage.events.vehicle_crash)
 validateAutoDamageEvent('explosion', Config.AutoDamage.events.explosion)
+assert(type(Config.AutoFireDamage) == 'table', 'Config.AutoFireDamage must be a table')
+assert(type(Config.AutoFireDamage.enabled) == 'boolean', 'Config.AutoFireDamage.enabled must be true or false')
+assert(type(Config.AutoFireDamage.debug) == 'boolean', 'Config.AutoFireDamage.debug must be true or false')
+assertInteger('Config.AutoFireDamage.pollInterval', Config.AutoFireDamage.pollInterval, 50)
+assertInteger('Config.AutoFireDamage.incidentEndGrace', Config.AutoFireDamage.incidentEndGrace, 0)
+assertInteger('Config.AutoFireDamage.networkRateLimit', Config.AutoFireDamage.networkRateLimit, 0)
+assertInteger('Config.AutoFireDamage.cooldown', Config.AutoFireDamage.cooldown, 0)
+for _, levelName in ipairs({ 'light', 'medium' }) do
+    local levelConfig = Config.AutoFireDamage[levelName]
+    local path = ('Config.AutoFireDamage.%s'):format(levelName)
+    assert(type(levelConfig) == 'table', ('%s must be a table'):format(path))
+    assertNumberRange(('%s.minHealthLoss'):format(path), levelConfig.minHealthLoss, 0, 1000)
+    assertInteger(('%s.minBurnDuration'):format(path), levelConfig.minBurnDuration, 0)
+    assertNumberRange(('%s.chance'):format(path), levelConfig.chance, 0, 100)
+end
+assert(Config.AutoFireDamage.medium.minHealthLoss >= Config.AutoFireDamage.light.minHealthLoss,
+    'Config.AutoFireDamage.medium.minHealthLoss must not be lower than light.minHealthLoss')
+assert(Config.AutoFireDamage.medium.minBurnDuration >= Config.AutoFireDamage.light.minBurnDuration,
+    'Config.AutoFireDamage.medium.minBurnDuration must not be lower than light.minBurnDuration')
 assert(type(Config.Commands) == 'table', 'Config.Commands must be a table')
 assert(type(Config.Commands.enabled) == 'boolean', 'Config.Commands.enabled must be true or false')
 assert(type(Config.Commands.restricted) == 'boolean', 'Config.Commands.restricted must be true or false')
@@ -249,6 +328,7 @@ validateCommandName('Config.Commands.escalateDamage', Config.Commands.escalateDa
 validateCommandName('Config.Commands.setDamageAll', Config.Commands.setDamageAll)
 validateCommandName('Config.Commands.setDamageArea', Config.Commands.setDamageArea)
 validateCommandName('Config.Commands.setDamageColor', Config.Commands.setDamageColor)
+validateCommandName('Config.Commands.fire', Config.Commands.fire)
 validateCommandName('Config.Commands.repair', Config.Commands.repair)
 validateCommandName('Config.Commands.unhack', Config.Commands.unhack)
 validateCommandName('Config.Commands.repairAll', Config.Commands.repairAll)

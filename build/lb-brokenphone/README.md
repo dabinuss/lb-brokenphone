@@ -11,6 +11,10 @@ blocks the phone with a dark screen and animation, blocks input, and plays a
 sound when the screen is clicked. Existing cracks remain visible above the hack
 screen and can be repaired independently.
 
+Fire damage is another independent state with light (1) and medium (2) levels.
+Its image is rendered above the crack layers, remains visible during a hack,
+and can be removed together with cracks or through dedicated fire-repair exports.
+
 ## Screenshots
 
 <p align="center">
@@ -47,6 +51,7 @@ directory contains development files and is not intended for server installation
    add_ace group.admin command.phonedamageall allow
    add_ace group.admin command.phonedamagearea allow
    add_ace group.admin command.phonedamagecolor allow
+   add_ace group.admin command.phonefire allow
    add_ace group.admin command.phonerepair allow
    add_ace group.admin command.phoneunhack allow
    add_ace group.admin command.phonerepairall allow
@@ -105,6 +110,28 @@ lasts; `300000` is five minutes and `0` means permanent. `maxDuration` limits
 durations supplied by exports. Timed hacks persist across restarts because their
 expiry time is stored with the phone. If clearing an expired hack cannot be
 persisted, `expiryRetryDelay` controls the delay before the server retries.
+
+Configure fire variants as paths relative to `html`. The files belong under
+`html/fire/light` and `html/fire/medium`; one variant is selected persistently
+per phone. Opaque images with a white background are supported because the NUI
+converts white pixels to transparency before placing fire above the cracks:
+
+```lua
+Config.Fire = {
+    blockInput = true,
+    inputBlockThreshold = 0.62,
+    images = {
+        light = { 'fire/light/firelight1.webp' },
+        medium = { 'fire/medium/firemedium1.webp' }
+    }
+}
+```
+
+With `blockInput = true`, mouse and touch input is rejected only on strongly
+burned pixels. The mask is generated once when the fire image or display size
+changes; input checks only read one cached byte. Increase
+`inputBlockThreshold` toward `1.0` to block fewer, darker pixels, or lower it
+toward `0.0` to include lighter burn marks.
 
 Large damage or repair events use batched reads and writes. The defaults are
 safe starting values for servers with several hundred players:
@@ -165,6 +192,33 @@ Speeds are metres per second; multiply by 3.6 for km/h. `impactWindow` allows th
 collision and body-damage signals to arrive in adjacent samples. Higher minimum
 values reduce sensitivity and false positives.
 
+### Automatic fire damage
+
+`Config.AutoFireDamage` observes complete burn incidents independently from
+automatic crack damage. The client records actual health loss and how long the
+player remained on fire. After the flames stop, `incidentEndGrace` includes any
+delayed final fire ticks. The client sends one report; the server selects
+medium first, otherwise light, rolls the matching chance once, resolves the
+equipped phone, and persists the result.
+
+```lua
+Config.AutoFireDamage = {
+    enabled = true,
+    debug = false,
+    pollInterval = 200,
+    incidentEndGrace = 750,
+    networkRateLimit = 2000,
+    cooldown = 45000,
+    light = { minHealthLoss = 5, minBurnDuration = 500, chance = 20 },
+    medium = { minHealthLoss = 25, minBurnDuration = 3000, chance = 55 }
+}
+```
+
+Meeting either the health-loss or duration threshold qualifies an incident.
+Medium is checked first and uses only its own chance; a failed medium roll does
+not fall back to light. Failed attempts consume `cooldown`. Fire levels are not
+cumulative: level 1 renders one light image and level 2 one medium image.
+
 ## Test commands
 
 All commands are registered server-side. Run them in chat with a leading slash,
@@ -177,6 +231,7 @@ or in the server console without one:
 /phonedamagearea <radius> [1-4]
 /phonedamagecolor black
 /phonedamagecolor white
+/phonefire <1-2> [phoneNumber]
 /phonerepair [phoneNumber]
 /phoneunhack [phoneNumber]
 /phonerepairall
@@ -197,7 +252,12 @@ creates or changes level 4.
 Normal damage and escalation can still change the physical crack level while
 the hack is active.
 
-`/phoneunhack [phoneNumber]` removes only the hack and leaves any crack damage
+`/phonefire 1 [phoneNumber]` applies light fire damage and
+`/phonefire 2 [phoneNumber]` applies medium fire damage. Fire only escalates and coexists
+with cracks and hacks. `/phonerepair` repairs both physical damage classes
+(cracks and fire) while leaving a hack intact.
+
+`/phoneunhack [phoneNumber]` removes only the hack and leaves crack and fire damage
 unchanged. It returns `phone_not_hacked` when no hack is active. `/phonerepair`
 does the opposite: it repairs only physical display damage and leaves an active
 hack in place. When command restrictions are enabled, `/phoneunhack` uses its own
@@ -216,7 +276,7 @@ cause is `explosion`. The
 command is only available in-game and the radius is limited by
 `Config.MaxDamageAreaRadius`.
 
-`/phonerepairall` repairs physical display damage on every connected player's
+`/phonerepairall` repairs crack and fire damage on every connected player's
 currently equipped phone without removing hacks. Like the other global
 commands, it is always ACE-restricted.
 
@@ -259,8 +319,16 @@ exports['lb-brokenphone']:EscalatePhoneDamageByNumber(phoneNumber, 'additional_i
 exports['lb-brokenphone']:ApplyPhoneDamageDelta(source, 2, 3, 'heavy_impact')
 exports['lb-brokenphone']:ApplyPhoneDamageDeltaByNumber(phoneNumber, 2, 3, 'heavy_impact')
 
+exports['lb-brokenphone']:ApplyPhoneFire(source, 1, 'small_fire')
+exports['lb-brokenphone']:ApplyPhoneFireByNumber(phoneNumber, 2, 'vehicle_fire')
+exports['lb-brokenphone']:RepairPhoneFire(source)
+exports['lb-brokenphone']:RepairPhoneFireByNumber(phoneNumber)
+
 -- Uses AutoDamage chance, severity, cooldown, escalation, and level-cap settings.
 exports['lb-brokenphone']:TryAutoDamage(source, 'vehicle_crash', 0.82)
+
+-- Uses AutoFireDamage thresholds, chance, and cooldown.
+exports['lb-brokenphone']:TryAutoFireDamage(source, 32, 4200)
 
 exports['lb-brokenphone']:HackPhone(source, 'story_event', 300000)
 exports['lb-brokenphone']:HackPhoneByNumber(phoneNumber, 'story_event', 300000)
@@ -304,7 +372,8 @@ local areaEscalated, areaEscalateErr, areaEscalateSummary =
     )
 
 local damage = exports['lb-brokenphone']:GetPhoneDamage(phoneNumber)
--- { damageLevel = 0..3, damageSeed = number, isHacked = boolean,
+-- { damageLevel = 0..3, damageSeed = number,
+--   fireLevel = 0..2, fireSeed = number, isHacked = boolean,
 --   hackExpiresAt = Unix timestamp (0 means permanent) }
 
 exports['lb-brokenphone']:RepairPhone(source)
@@ -316,12 +385,14 @@ local allRepaired, allRepairErr, allRepairSummary =
 ```
 
 Single-phone damage and escalation exports return `success, error, damage`.
-Delta and `TryAutoDamage` exports additionally return `changed` as their fourth
+Delta, fire-application, `TryAutoDamage`, and `TryAutoFireDamage` exports
+additionally return `changed` as their fourth
 value. `changed` is false when the phone was already at the event's maximum.
 `HackPhone` and `HackPhoneByNumber` return `success, error, damage`; hack bulk,
 all-player, and area exports return `success, error, summary`.
-Normal repair exports remove crack damage only; dedicated hacked-phone repair
-exports remove only the hack. They return `success, error`. Bulk, all-player, and area exports
+Normal repair exports remove crack and fire damage; dedicated hacked-phone repair
+exports remove only the hack, and dedicated fire-repair exports remove only
+fire damage. They return `success, error`. Bulk, all-player, and area exports
 return `success, error, summary`. `GetPhoneDamage` returns the damage state, or
 `nil, error` when it cannot be loaded.
 
@@ -336,7 +407,7 @@ last argument is the optional duration in milliseconds. Re-hacking a phone
 replaces its expiry timer. `GetPhoneDamage` exposes `isHacked` and
 `hackExpiresAt`; `IsPhoneHacked(source)` and `IsPhoneNumberHacked(phoneNumber)`
 return `hacked, error, state`. `RepairHackedPhone` and its number variant remove
-only the hack, while the normal repair exports remove only crack damage. This
+only the hack, while the normal repair exports remove crack and fire damage. This
 makes repair-shop and mission integrations explicit and prevents either repair
 from accidentally clearing the other state.
 
@@ -347,6 +418,11 @@ server-side integrations. It does not force damage: the configured event must
 be enabled and still passes through its severity threshold, cooldowns, and
 server-side chance roll. Use the normal damage exports when an event must always
 apply damage.
+
+`TryAutoFireDamage(source, healthLoss, burnDuration)` accepts health points and
+milliseconds for trusted server-side fire integrations. It uses the same
+threshold selection, chance roll, cooldown, and persistent fire application as
+the built-in detector.
 
 Use the bulk exports for events affecting many players instead of looping the
 single-phone exports. They resolve equipped phones, deduplicate shared phone

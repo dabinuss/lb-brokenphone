@@ -23,6 +23,7 @@ files {
     'html/index.html',
     'html/lb-brokenphone.js',
     'html/cracks/**/*.webp',
+    'html/fire/**/*',
     'html/hack/*',
 }
 
