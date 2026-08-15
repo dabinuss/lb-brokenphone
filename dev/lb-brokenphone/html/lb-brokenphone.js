@@ -42,6 +42,16 @@
         { rotate: 180, scaleX: 1, scaleY: 1 }
     ];
     const layerCounts = { 1: 3, 2: 2, 3: 1 };
+    const crackEdge = {
+        shadowOffsetX: 1.4,
+        shadowOffsetY: 1.9,
+        shadowBlur: 1.55,
+        shadowOpacity: 0.58,
+        highlightOffsetX: -0.55,
+        highlightOffsetY: -0.7,
+        highlightBlur: 0.35,
+        highlightOpacity: 0.23
+    };
     const phaseSeedStep = 1000003;
     const crackLevels = Uint8Array.from({ length: 256 }, function (_, value) {
         const normalized = Math.min(255, value * 1.02) / 255;
@@ -220,6 +230,44 @@
         overlay.style.borderRadius = 'inherit';
         overlay.style.overflow = 'hidden';
         overlay.style.backgroundImage = 'none';
+        let shadowCanvas = overlay.querySelector('#lb-brokenphone-crack-shadow');
+        if (!shadowCanvas) {
+            shadowCanvas = targetDocument.createElement('canvas');
+            shadowCanvas.id = 'lb-brokenphone-crack-shadow';
+            Object.assign(shadowCanvas.style, {
+                display: 'block',
+                position: 'absolute',
+                inset: '0',
+                zIndex: '2',
+                width: '100%',
+                height: '100%',
+                opacity: String(crackEdge.shadowOpacity),
+                filter: `blur(${crackEdge.shadowBlur}px)`,
+                transform: `translate(${crackEdge.shadowOffsetX}px, ${crackEdge.shadowOffsetY}px)`,
+                mixBlendMode: 'multiply',
+                pointerEvents: 'none'
+            });
+            overlay.appendChild(shadowCanvas);
+        }
+        let highlightCanvas = overlay.querySelector('#lb-brokenphone-crack-highlight');
+        if (!highlightCanvas) {
+            highlightCanvas = targetDocument.createElement('canvas');
+            highlightCanvas.id = 'lb-brokenphone-crack-highlight';
+            Object.assign(highlightCanvas.style, {
+                display: 'block',
+                position: 'absolute',
+                inset: '0',
+                zIndex: '3',
+                width: '100%',
+                height: '100%',
+                opacity: String(crackEdge.highlightOpacity),
+                filter: `blur(${crackEdge.highlightBlur}px)`,
+                transform: `translate(${crackEdge.highlightOffsetX}px, ${crackEdge.highlightOffsetY}px)`,
+                mixBlendMode: 'screen',
+                pointerEvents: 'none'
+            });
+            overlay.appendChild(highlightCanvas);
+        }
         let canvas = overlay.querySelector('#lb-brokenphone-canvas');
         if (!canvas) {
             canvas = targetDocument.createElement('canvas');
@@ -243,6 +291,7 @@
                 position: 'absolute',
                 inset: '0',
                 display: 'none',
+                zIndex: '1',
                 alignItems: 'center',
                 justifyContent: 'center',
                 background: '#0b0d10',
@@ -419,8 +468,14 @@
 
         if (token !== renderToken || !canvas.isConnected) return;
         const overlay = canvas.parentElement;
+        const shadowCanvas = overlay.querySelector('#lb-brokenphone-crack-shadow');
+        const highlightCanvas = overlay.querySelector('#lb-brokenphone-crack-highlight');
         if (canvas.width !== width) canvas.width = width;
         if (canvas.height !== height) canvas.height = height;
+        if (shadowCanvas.width !== width) shadowCanvas.width = width;
+        if (shadowCanvas.height !== height) shadowCanvas.height = height;
+        if (highlightCanvas.width !== width) highlightCanvas.width = width;
+        if (highlightCanvas.height !== height) highlightCanvas.height = height;
 
         const context = canvas.getContext('2d');
         context.globalCompositeOperation = 'source-over';
@@ -446,14 +501,29 @@
         // Apply contrast and color conversion directly to the canvas pixels.
         const imageData = context.getImageData(0, 0, width, height);
         const pixels = imageData.data;
+        const shadowContext = shadowCanvas.getContext('2d');
+        const highlightContext = highlightCanvas.getContext('2d');
+        const shadowData = shadowContext.createImageData(width, height);
+        const highlightData = highlightContext.createImageData(width, height);
         for (let index = 0; index < pixels.length; index += 4) {
             const red = crackLevels[pixels[index]];
             const green = crackLevels[pixels[index + 1]];
             const blue = crackLevels[pixels[index + 2]];
-            pixels[index] = damageColor === 'white' ? 255 - red : red;
-            pixels[index + 1] = damageColor === 'white' ? 255 - green : green;
-            pixels[index + 2] = damageColor === 'white' ? 255 - blue : blue;
+            const luminance = (red + green + blue) / 3;
+            const crackAlpha = Math.max(0, Math.min(255, (255 - luminance - 6) * 1.2));
+            shadowData.data[index + 3] = crackAlpha;
+            highlightData.data[index] = 255;
+            highlightData.data[index + 1] = 255;
+            highlightData.data[index + 2] = 255;
+            highlightData.data[index + 3] = crackAlpha;
+            const crackValue = damageColor === 'white' ? 255 : 0;
+            pixels[index] = crackValue;
+            pixels[index + 1] = crackValue;
+            pixels[index + 2] = crackValue;
+            pixels[index + 3] = crackAlpha;
         }
+        shadowContext.putImageData(shadowData, 0, 0);
+        highlightContext.putImageData(highlightData, 0, 0);
         context.putImageData(imageData, 0, 0);
         context.globalCompositeOperation = 'source-over';
         canvas.dataset.phases = String(phases.length);
@@ -472,6 +542,8 @@
         const overlay = ensureOverlay(currentPhoneContainer);
         if (!overlay) return;
         const canvas = overlay.querySelector('#lb-brokenphone-canvas');
+        const shadowCanvas = overlay.querySelector('#lb-brokenphone-crack-shadow');
+        const highlightCanvas = overlay.querySelector('#lb-brokenphone-crack-highlight');
         const hackScreen = overlay.querySelector('#lb-brokenphone-hack');
         const hackImage = hackScreen?.querySelector('#lb-brokenphone-hack-image');
         const hackTextEl = hackScreen?.querySelector('#lb-brokenphone-hack-text');
@@ -482,19 +554,23 @@
         const damageColor = lastData.damageColor === 'white' ? 'white' : 'black';
         const visible = (level > 0 || hacked) && lastData.state !== 'closed';
         overlay.style.filter = 'none';
-        overlay.style.mixBlendMode = hacked ? 'normal' : (damageColor === 'white' ? 'screen' : 'multiply');
+        overlay.style.mixBlendMode = 'normal';
         overlay.style.backgroundColor = 'transparent';
-        canvas.style.mixBlendMode = hacked ? (damageColor === 'white' ? 'screen' : 'multiply') : 'normal';
+        canvas.style.mixBlendMode = damageColor === 'white' ? 'screen' : 'multiply';
         
         renderToken += 1;
         if (!visible) {
             hackWasVisible = false;
             overlay.style.display = 'none';
             canvas.style.display = 'none';
+            shadowCanvas.style.display = 'none';
+            highlightCanvas.style.display = 'none';
             if (hackScreen) hackScreen.style.display = 'none';
             stopHackSound();
             const context = canvas.getContext('2d');
             context.clearRect(0, 0, canvas.width, canvas.height);
+            shadowCanvas.getContext('2d').clearRect(0, 0, shadowCanvas.width, shadowCanvas.height);
+            highlightCanvas.getContext('2d').clearRect(0, 0, highlightCanvas.width, highlightCanvas.height);
             canvas.dataset.phases = '0';
             canvas.dataset.damageLevel = '0';
             canvas.dataset.damageSeed = '0';
@@ -524,11 +600,15 @@
 
         if (level === 0) {
             canvas.style.display = 'none';
+            shadowCanvas.style.display = 'none';
+            highlightCanvas.style.display = 'none';
             overlay.style.display = 'block';
             return;
         }
 
         canvas.style.display = 'block';
+        shadowCanvas.style.display = 'block';
+        highlightCanvas.style.display = 'block';
 
         const pixelRatio = Math.min(Number(targetWindow && targetWindow.devicePixelRatio) || 1, 2);
         const displayWidth = overlay.parentElement.clientWidth || overlay.clientWidth || 290;
