@@ -32,6 +32,11 @@ Config.Persistence = {
     resolveYieldEvery = 100 -- Yield after resolving this many equipped phone numbers.
 }
 
+-- Protect the client-triggered initial phone sync from duplicate requests.
+Config.Sync = {
+    networkRateLimit = 1000 -- Minimum milliseconds between sync requests per player.
+}
+
 -- Time in milliseconds before opening/closing transitions are considered complete.
 Config.Transition = {
     openDuration = 500, -- Delay before the overlay enters its fully open state.
@@ -117,8 +122,8 @@ Config.AutoDamage = {
 }
 
 Config.Commands = {
-    enabled = true,                         -- Register test/admin commands; production exports remain available when false.
-    restricted = false,                    -- Require matching ACE permissions for damage and repair commands.
+    enabled = false,                        -- Register test/admin commands; production exports remain available when false.
+    restricted = true,                     -- Require matching ACE permissions for damage and repair commands.
     setDamage = 'phonedamage',              -- Command used to set crack level 1-3 or activate the separate hack with 4.
     escalateDamage = 'phoneescalate',       -- Command used to increase damage by exactly one level.
     setDamageAll = 'phonedamageall',        -- ACE-only command that damages every player's currently equipped phone.
@@ -203,6 +208,8 @@ assertInteger('Config.Persistence.batchSize', Config.Persistence.batchSize, 1)
 assertInteger('Config.Persistence.readBatchSize', Config.Persistence.readBatchSize, 1)
 assertInteger('Config.Persistence.batchDelay', Config.Persistence.batchDelay, 0)
 assertInteger('Config.Persistence.resolveYieldEvery', Config.Persistence.resolveYieldEvery, 1)
+assert(type(Config.Sync) == 'table', 'Config.Sync must be a table')
+assertInteger('Config.Sync.networkRateLimit', Config.Sync.networkRateLimit, 0)
 assert(type(Config.Transition) == 'table', 'Config.Transition must be a table')
 assertInteger('Config.Transition.openDuration', Config.Transition.openDuration, 0)
 assertInteger('Config.Transition.closeDuration', Config.Transition.closeDuration, 0)

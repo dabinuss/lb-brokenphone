@@ -21,7 +21,7 @@ end
 
 local function debugLog(message)
     if Config.Debug then
-        print(('^3[lb-phone-damage]^7 %s'):format(tostring(message)))
+        print(('^3[lb-brokenphone]^7 %s'):format(tostring(message)))
     end
 end
 
@@ -55,7 +55,7 @@ local function sendNuiUpdate(force)
     lastNuiStateKey = stateKey
 
     SendNUIMessage({
-        action = 'lb-phone-damage:update',
+        action = 'lb-brokenphone:update',
         state = state.visualState,
         damageLevel = state.damageLevel,
         damageSeed = state.damageSeed,
@@ -85,7 +85,7 @@ local function stopTouchFaults()
     touchToken = touchToken + 1
     if touchFaultActive then
         SendNUIMessage({
-            action = 'lb-phone-damage:touchFault',
+            action = 'lb-brokenphone:touchFault',
             active = false
         })
         touchFaultActive = false
@@ -116,13 +116,13 @@ local function startTouchFaults()
 
             touchFaultActive = true
             SendNUIMessage({
-                action = 'lb-phone-damage:touchFault',
+                action = 'lb-brokenphone:touchFault',
                 active = true
             })
             Wait(math.random(profile.durationMin, profile.durationMax))
             if touchFaultActive then
                 SendNUIMessage({
-                    action = 'lb-phone-damage:touchFault',
+                    action = 'lb-brokenphone:touchFault',
                     active = false
                 })
                 touchFaultActive = false
@@ -174,7 +174,7 @@ local function setActivePhone(phoneNumber)
     state.isHacked = false
     state.hackExpiresAt = 0
     updateVisibility()
-    TriggerServerEvent('lb-phone-damage:server:syncPhone')
+    TriggerServerEvent('lb-brokenphone:server:syncPhone')
 end
 
 local function readLbPhoneState()
@@ -189,7 +189,7 @@ local function readLbPhoneState()
     setActivePhone(okNumber and number or nil)
 end
 
-RegisterNetEvent('lb-phone-damage:client:receiveDamage', function(phoneNumber, damageLevel, damageSeed, isHacked, hackExpiresAt)
+RegisterNetEvent('lb-brokenphone:client:receiveDamage', function(phoneNumber, damageLevel, damageSeed, isHacked, hackExpiresAt)
     if phoneNumber ~= state.phoneNumber then return end
     state.damageLevel = math.max(0, math.min(3, tonumber(damageLevel) or 0))
     state.damageSeed = tonumber(damageSeed) or 0
@@ -198,16 +198,11 @@ RegisterNetEvent('lb-phone-damage:client:receiveDamage', function(phoneNumber, d
     updateVisibility()
 end)
 
-RegisterNetEvent('lb-phone-damage:client:setDamageColor', function(damageColor)
+RegisterNetEvent('lb-brokenphone:client:setDamageColor', function(damageColor)
     local nextColor = normalizeDamageColor(damageColor)
     if state.damageColor == nextColor then return end
     state.damageColor = nextColor
     sendNuiUpdate()
-end)
-
-RegisterNetEvent('lb-phone-damage:client:commandResult', function(message, success)
-    local color = success == false and '^1' or '^2'
-    print(('%s[lb-phone-damage]^7 %s'):format(color, tostring(message)))
 end)
 
 RegisterNetEvent('lb-phone:numberChanged', function(newNumber)

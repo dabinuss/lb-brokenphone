@@ -5,7 +5,7 @@ local pendingDamage = {}
 
 local function debugLog(message, ...)
     if not Config.AutoDamage.debug then return end
-    print(('[lb-phone-damage][auto] ' .. message):format(...))
+    print(('[lb-brokenphone][auto] ' .. message):format(...))
 end
 
 local function elapsed(now, previous)
@@ -68,13 +68,13 @@ local function tryAutoDamage(playerSource, cause, severity)
         return false, 'chance_failed'
     end
 
-    if not LBPhoneDamageCore or type(LBPhoneDamageCore.applyPhoneDamageDelta) ~= 'function' then
+    if not LBBrokenPhoneCore or type(LBBrokenPhoneCore.applyPhoneDamageDelta) ~= 'function' then
         return false, 'core_unavailable'
     end
 
     pendingDamage[playerSource] = true
     local invoked, success, err, state, changed = pcall(
-        LBPhoneDamageCore.applyPhoneDamageDelta,
+        LBBrokenPhoneCore.applyPhoneDamageDelta,
         playerSource,
         eventConfig.escalation,
         eventConfig.maxResultLevel,
@@ -83,7 +83,7 @@ local function tryAutoDamage(playerSource, cause, severity)
     pendingDamage[playerSource] = nil
 
     if not invoked then
-        print(('^1[lb-phone-damage][auto] Damage failed for source %d: %s^7'):format(
+        print(('^1[lb-brokenphone][auto] Damage failed for source %d: %s^7'):format(
             playerSource, tostring(success)
         ))
         return false, 'core_error'
@@ -97,7 +97,7 @@ local function tryAutoDamage(playerSource, cause, severity)
     return true, nil, state, changed
 end
 
-RegisterNetEvent('lb-phone-damage:server:autoDamageEvent', function(cause, severity)
+RegisterNetEvent('lb-brokenphone:server:autoDamageEvent', function(cause, severity)
     local playerSource = source
     if not Config.AutoDamage.enabled then return end
 

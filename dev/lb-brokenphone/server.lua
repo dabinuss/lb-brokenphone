@@ -11,6 +11,8 @@ local managerQueueHead = 1
 local managerRunning = false
 local damageColor = Config.DamageColor == 'white' and 'white' or 'black'
 local hackTimerTokens = {}
+local lastSyncRequestBySource = {}
+local syncPendingBySource = {}
 local scheduleHackExpiry
 local clearHackUnlocked
 local hackBulkPhones
@@ -21,7 +23,7 @@ local fallbackPath = tostring(Config.Database.jsonFile or 'data/phone_damage.jso
 assert(tableName:match('^[%w_]+$'), 'Config.Database.tableName contains invalid characters')
 
 local function debugLog(...)
-    if Config.Debug then print('[lb-phone-damage]', ...) end
+    if Config.Debug then print('[lb-brokenphone]', ...) end
 end
 
 local function normalizePhoneNumber(phoneNumber)
@@ -60,7 +62,7 @@ local function normalizeDamageColor(value)
 end
 
 local function sendDamageColor(playerSource)
-    TriggerClientEvent('lb-phone-damage:client:setDamageColor', playerSource, damageColor)
+    TriggerClientEvent('lb-brokenphone:client:setDamageColor', playerSource, damageColor)
 end
 
 local function loadFallbackData()
@@ -76,7 +78,7 @@ end
 
 local function saveFallbackData()
     local ok = SaveResourceFile(GetCurrentResourceName(), fallbackPath, json.encode(fallbackData), -1)
-    if not ok then print(('[lb-phone-damage] Failed to save %s'):format(fallbackPath)) end
+    if not ok then print(('[lb-brokenphone] Failed to save %s'):format(fallbackPath)) end
     return ok
 end
 
@@ -87,13 +89,13 @@ local function finishDatabaseStart(mode)
     local waiters = databaseWaiters
     databaseWaiters = {}
     for i = 1, #waiters do waiters[i](true) end
-    print(('[lb-phone-damage] Persistence ready (%s).'):format(mode))
+    print(('[lb-brokenphone] Persistence ready (%s).'):format(mode))
 end
 
 local function failDatabaseStart(err)
     databaseStarting = false
     local message = tostring(err or 'database_initialization_failed')
-    print(('^1[lb-phone-damage] Persistence initialization failed: %s^7'):format(message))
+    print(('^1[lb-brokenphone] Persistence initialization failed: %s^7'):format(message))
     local waiters = databaseWaiters
     databaseWaiters = {}
     for i = 1, #waiters do waiters[i](false, message) end
@@ -363,7 +365,7 @@ end
 
 local function sendDamageState(playerSource, phoneNumber, state)
     TriggerClientEvent(
-        'lb-phone-damage:client:receiveDamage',
+        'lb-brokenphone:client:receiveDamage',
         playerSource,
         phoneNumber,
         state.damageLevel,
@@ -408,7 +410,7 @@ end
 local function syncPhoneUnlocked(playerSource, phoneNumber)
     local state, err = getCachedDamageUnlocked(phoneNumber)
     if err then
-        print(('^1[lb-phone-damage] Failed to load damage for %s: %s^7'):format(
+        print(('^1[lb-brokenphone] Failed to load damage for %s: %s^7'):format(
             tostring(phoneNumber), tostring(err)
         ))
         return false, err
@@ -1099,11 +1101,10 @@ local function hackPhonesInArea(coords, radius, cause, durationMs)
 end
 
 local function commandReply(playerSource, message, success)
-    print(('[lb-phone-damage] %s'):format(message))
+    print(('[lb-brokenphone] %s'):format(message))
     if playerSource and playerSource > 0 then
-        TriggerClientEvent('lb-phone-damage:client:commandResult', playerSource, message, success)
         TriggerClientEvent('chat:addMessage', playerSource, {
-            args = { success == false and '^1[lb-phone-damage]' or '^2[lb-phone-damage]', message }
+            args = { success == false and '^1[lb-brokenphone]' or '^2[lb-brokenphone]', message }
         })
     end
 end
@@ -1154,16 +1155,34 @@ local function hasRepairAllPermission(playerSource)
     return IsPlayerAceAllowed(playerSource, ('command.%s'):format(Config.Commands.repairAll))
 end
 
-RegisterNetEvent('lb-phone-damage:server:syncPhone', function()
+RegisterNetEvent('lb-brokenphone:server:syncPhone', function()
     local playerSource = source
+    local now = GetGameTimer()
+    local previous = lastSyncRequestBySource[playerSource]
+    if syncPendingBySource[playerSource] then return end
+    if previous and now >= previous and now - previous < Config.Sync.networkRateLimit then return end
+    lastSyncRequestBySource[playerSource] = now
+
     sendDamageColor(playerSource)
     local phoneNumber = resolveEquippedPhone(playerSource)
     setActivePhone(playerSource, phoneNumber)
     if phoneNumber then
+        local syncToken = {}
+        syncPendingBySource[playerSource] = syncToken
         CreateThread(function()
-            runManaged(function()
-                return syncPhoneUnlocked(playerSource, phoneNumber)
+            local ok, err = pcall(function()
+                runManaged(function()
+                    return syncPhoneUnlocked(playerSource, phoneNumber)
+                end)
             end)
+            if syncPendingBySource[playerSource] == syncToken then
+                syncPendingBySource[playerSource] = nil
+            end
+            if not ok then
+                print(('^1[lb-brokenphone] Phone sync failed for source %d: %s^7'):format(
+                    playerSource, tostring(err)
+                ))
+            end
         end)
     end
 end)
@@ -1183,7 +1202,10 @@ AddEventHandler('lb-phone:numberChanged', function(playerSource)
 end)
 
 AddEventHandler('playerDropped', function()
-    setActivePhone(source, nil)
+    local playerSource = source
+    setActivePhone(playerSource, nil)
+    lastSyncRequestBySource[playerSource] = nil
+    syncPendingBySource[playerSource] = nil
 end)
 
 exports('ApplyPhoneDamage', function(playerSource, level, cause, hackDurationMs)
@@ -1212,8 +1234,8 @@ exports('EscalatePhoneDamageByNumber', escalateByNumber)
 exports('ApplyPhoneDamageDelta', applyPhoneDamageDelta)
 exports('ApplyPhoneDamageDeltaByNumber', applyDamageDeltaByNumber)
 
-LBPhoneDamageCore = LBPhoneDamageCore or {}
-LBPhoneDamageCore.applyPhoneDamageDelta = applyPhoneDamageDelta
+LBBrokenPhoneCore = LBBrokenPhoneCore or {}
+LBBrokenPhoneCore.applyPhoneDamageDelta = applyPhoneDamageDelta
 
 exports('GetPhoneDamage', function(phoneNumber)
     return runManaged(function()
@@ -1439,7 +1461,7 @@ if Config.Commands.enabled then
         end
 
         damageColor = nextColor
-        TriggerClientEvent('lb-phone-damage:client:setDamageColor', -1, damageColor)
+        TriggerClientEvent('lb-brokenphone:client:setDamageColor', -1, damageColor)
         commandReply(playerSource, ('Global crack color set to %s.'):format(damageColor), true)
     end
 

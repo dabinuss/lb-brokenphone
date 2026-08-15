@@ -2,7 +2,7 @@ fx_version 'cerulean'
 game 'gta5'
 lua54 'yes'
 
-name 'lb-phone-damage'
+name 'lb-brokenphone'
 description 'Persistent, phone-number-based display damage for LB Phone.'
 author 'Dabinuss'
 version '1.0.0'
@@ -21,7 +21,7 @@ ui_page 'html/index.html'
 
 files {
     'html/index.html',
-    'html/lb-phone-damage.js',
+    'html/lb-brokenphone.js',
     'html/cracks/**/*.webp',
     'html/hack/*',
 }

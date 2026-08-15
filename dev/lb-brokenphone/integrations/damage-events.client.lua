@@ -62,7 +62,7 @@ local function reportEvent(cause, severity)
     local previous = lastReportedAt[cause]
     if previous and now >= previous and now - previous < Config.AutoDamage.clientDebounce then return end
     lastReportedAt[cause] = now
-    TriggerServerEvent('lb-phone-damage:server:autoDamageEvent', cause, clamp(severity))
+    TriggerServerEvent('lb-brokenphone:server:autoDamageEvent', cause, clamp(severity))
 end
 
 local function resolveDamageWeapon(args)

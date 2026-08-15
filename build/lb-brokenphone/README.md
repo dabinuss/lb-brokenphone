@@ -1,4 +1,4 @@
-# lb-phone-damage
+# lb-brokenphone
 
 Persistent display damage for LB Phone. Damage is stored by the equipped phone
 number, survives transfers/restarts, only escalates, and can cause short touch
@@ -13,18 +13,18 @@ screen and can be repaired independently.
 
 ## Installation
 
-Use the ready-to-install resource from `build/lb-phone-damage`. The `dev`
+Use the ready-to-install resource from `build/lb-brokenphone`. The `dev`
 directory contains development files and is not intended for server installation.
 
-1. Copy `build/lb-phone-damage` into your resources folder as
-   `lb-phone-damage`.
-2. Ensure `oxmysql`, `lb-phone`, then `lb-phone-damage` in that order.
+1. Copy `build/lb-brokenphone` into your resources folder as
+   `lb-brokenphone`.
+2. Ensure `oxmysql`, `lb-phone`, then `lb-brokenphone` in that order.
    No files inside `lb-phone` need to be copied, patched, or modified.
 3. The SQL table is created automatically. `database.sql` is supplied for manual
    installation. If oxmysql is unavailable, the optional JSON fallback is used.
-4. Damage and repair test commands are available to players by default and can
-   only mutate the player's equipped phone. To restrict them to administrators, set
-   `Config.Commands.restricted = true` and grant ACE access:
+4. Damage and repair test/admin commands are disabled by default. To enable
+   them for administrators, set `Config.Commands.enabled = true`, keep
+   `Config.Commands.restricted = true`, and grant ACE access:
 
    ```cfg
    add_ace group.admin command.phonedamage allow
@@ -39,6 +39,9 @@ directory contains development files and is not intended for server installation
 
    The color, all-player, and area commands are always ACE-restricted because
    they can affect other players.
+
+   For local development only, setting `Config.Commands.restricted = false`
+   makes the single-phone test commands available without ACE permissions.
 
 ## Configuration
 
@@ -85,6 +88,10 @@ Config.Persistence = {
     resolveYieldEvery = 100 -- Yield while resolving large source lists.
 }
 ```
+
+Client-triggered phone synchronization is deduplicated while a sync is pending
+and rate-limited per player. `Config.Sync.networkRateLimit` controls the minimum
+interval and defaults to `1000` milliseconds.
 
 Normal servers usually do not need to change these values. A larger batch size
 finishes sooner but creates larger individual queries; a larger delay spreads
@@ -216,44 +223,44 @@ These exports are server-side APIs. Parameter meanings:
   `Config.Hack.maxDuration` are rejected.
 
 ```lua
-exports['lb-phone-damage']:ApplyPhoneDamage(source, 2, 'vehicle_crash')
-exports['lb-phone-damage']:ApplyPhoneDamageByNumber(phoneNumber, 3, 'water_damage')
-exports['lb-phone-damage']:EscalatePhoneDamage(source, 'additional_impact')
-exports['lb-phone-damage']:EscalatePhoneDamageByNumber(phoneNumber, 'additional_impact')
-exports['lb-phone-damage']:ApplyPhoneDamageDelta(source, 2, 3, 'heavy_impact')
-exports['lb-phone-damage']:ApplyPhoneDamageDeltaByNumber(phoneNumber, 2, 3, 'heavy_impact')
+exports['lb-brokenphone']:ApplyPhoneDamage(source, 2, 'vehicle_crash')
+exports['lb-brokenphone']:ApplyPhoneDamageByNumber(phoneNumber, 3, 'water_damage')
+exports['lb-brokenphone']:EscalatePhoneDamage(source, 'additional_impact')
+exports['lb-brokenphone']:EscalatePhoneDamageByNumber(phoneNumber, 'additional_impact')
+exports['lb-brokenphone']:ApplyPhoneDamageDelta(source, 2, 3, 'heavy_impact')
+exports['lb-brokenphone']:ApplyPhoneDamageDeltaByNumber(phoneNumber, 2, 3, 'heavy_impact')
 
 -- Uses AutoDamage chance, severity, cooldown, escalation, and level-cap settings.
-exports['lb-phone-damage']:TryAutoDamage(source, 'vehicle_crash', 0.82)
+exports['lb-brokenphone']:TryAutoDamage(source, 'vehicle_crash', 0.82)
 
-exports['lb-phone-damage']:HackPhone(source, 'story_event', 300000)
-exports['lb-phone-damage']:HackPhoneByNumber(phoneNumber, 'story_event', 300000)
-exports['lb-phone-damage']:HackBulkPhones(playerSources, 'story_event', 300000)
-exports['lb-phone-damage']:HackAllPhones('server_event', 300000)
-exports['lb-phone-damage']:HackPhonesInArea(coords, 75.0, 'area_hack', 300000)
+exports['lb-brokenphone']:HackPhone(source, 'story_event', 300000)
+exports['lb-brokenphone']:HackPhoneByNumber(phoneNumber, 'story_event', 300000)
+exports['lb-brokenphone']:HackBulkPhones(playerSources, 'story_event', 300000)
+exports['lb-brokenphone']:HackAllPhones('server_event', 300000)
+exports['lb-brokenphone']:HackPhonesInArea(coords, 75.0, 'area_hack', 300000)
 
-local hacked, hackErr, hackState = exports['lb-phone-damage']:IsPhoneHacked(source)
+local hacked, hackErr, hackState = exports['lb-brokenphone']:IsPhoneHacked(source)
 local numberHacked, numberHackErr, numberHackState =
-    exports['lb-phone-damage']:IsPhoneNumberHacked(phoneNumber)
+    exports['lb-brokenphone']:IsPhoneNumberHacked(phoneNumber)
 
-exports['lb-phone-damage']:RepairHackedPhone(source)
-exports['lb-phone-damage']:RepairHackedPhoneByNumber(phoneNumber)
+exports['lb-brokenphone']:RepairHackedPhone(source)
+exports['lb-brokenphone']:RepairHackedPhoneByNumber(phoneNumber)
 
-local success, err, summary = exports['lb-phone-damage']:ApplyBulkPhoneDamage(
+local success, err, summary = exports['lb-brokenphone']:ApplyBulkPhoneDamage(
     playerSources,
     2,
     'large_explosion'
 )
 local escalated, escalateErr, escalateSummary =
-    exports['lb-phone-damage']:EscalateBulkPhoneDamage(playerSources, 'explosion')
+    exports['lb-brokenphone']:EscalateBulkPhoneDamage(playerSources, 'explosion')
 
 local allSuccess, allErr, allSummary =
-    exports['lb-phone-damage']:ApplyPhoneDamageToAll(2, 'emp_event')
+    exports['lb-brokenphone']:ApplyPhoneDamageToAll(2, 'emp_event')
 local allEscalated, allEscalateErr, allEscalateSummary =
-    exports['lb-phone-damage']:EscalatePhoneDamageForAll('explosion')
+    exports['lb-brokenphone']:EscalatePhoneDamageForAll('explosion')
 
 local areaSuccess, areaErr, areaSummary =
-    exports['lb-phone-damage']:ApplyPhoneDamageInArea(
+    exports['lb-brokenphone']:ApplyPhoneDamageInArea(
         { x = 100.0, y = 200.0, z = 30.0 },
         75.0,
         3,
@@ -261,22 +268,22 @@ local areaSuccess, areaErr, areaSummary =
     )
 
 local areaEscalated, areaEscalateErr, areaEscalateSummary =
-    exports['lb-phone-damage']:EscalatePhoneDamageInArea(
+    exports['lb-brokenphone']:EscalatePhoneDamageInArea(
         vector3(100.0, 200.0, 30.0),
         75.0,
         'explosion'
     )
 
-local damage = exports['lb-phone-damage']:GetPhoneDamage(phoneNumber)
+local damage = exports['lb-brokenphone']:GetPhoneDamage(phoneNumber)
 -- { damageLevel = 0..3, damageSeed = number, isHacked = boolean,
 --   hackExpiresAt = Unix timestamp (0 means permanent) }
 
-exports['lb-phone-damage']:RepairPhone(source)
-exports['lb-phone-damage']:RepairPhoneByNumber(phoneNumber)
+exports['lb-brokenphone']:RepairPhone(source)
+exports['lb-brokenphone']:RepairPhoneByNumber(phoneNumber)
 local repaired, repairErr, repairSummary =
-    exports['lb-phone-damage']:RepairBulkPhoneDamage(playerSources)
+    exports['lb-brokenphone']:RepairBulkPhoneDamage(playerSources)
 local allRepaired, allRepairErr, allRepairSummary =
-    exports['lb-phone-damage']:RepairAllPhones()
+    exports['lb-brokenphone']:RepairAllPhones()
 ```
 
 Single-phone damage and escalation exports return `success, error, damage`.
@@ -328,7 +335,7 @@ actual coordinates as the center:
 
 ```lua
 local success, err, summary =
-    exports['lb-phone-damage']:EscalatePhoneDamageInArea(
+    exports['lb-brokenphone']:EscalatePhoneDamageInArea(
         explosionCoords,
         75.0,
         'explosion'

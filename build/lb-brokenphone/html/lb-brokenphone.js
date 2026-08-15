@@ -1,8 +1,11 @@
-// Runs in lb-phone-damage's own NUI and renders into LB Phone's sibling frame.
+// Runs in lb-brokenphone's own NUI and renders into LB Phone's sibling frame.
 (function () {
     'use strict';
 
-    const assetRoot = window.LB_PHONE_DAMAGE_ASSET_ROOT || 'https://cfx-nui-lb-phone-damage/html/';
+    const resourceName = typeof GetParentResourceName === 'function'
+        ? GetParentResourceName()
+        : 'lb-brokenphone';
+    const assetRoot = window.LB_BROKENPHONE_ASSET_ROOT || `https://cfx-nui-${resourceName}/html/`;
     const cracks = {
         1: [
             'cracks/light/cracklight1.webp',
@@ -185,11 +188,11 @@
 
     function ensureOverlay(phone) {
         if (!targetDocument || !phone) return null;
-        let overlay = targetDocument.getElementById('lb-phone-damage-overlay');
+        let overlay = targetDocument.getElementById('lb-brokenphone-overlay');
         if (overlay && overlay.parentElement !== phone) overlay.remove();
         if (!overlay || !overlay.isConnected) {
             overlay = targetDocument.createElement('div');
-            overlay.id = 'lb-phone-damage-overlay';
+            overlay.id = 'lb-brokenphone-overlay';
             Object.assign(overlay.style, {
                 position: 'absolute',
                 inset: '0',
@@ -217,10 +220,10 @@
         overlay.style.borderRadius = 'inherit';
         overlay.style.overflow = 'hidden';
         overlay.style.backgroundImage = 'none';
-        let canvas = overlay.querySelector('#lb-phone-damage-canvas');
+        let canvas = overlay.querySelector('#lb-brokenphone-canvas');
         if (!canvas) {
             canvas = targetDocument.createElement('canvas');
-            canvas.id = 'lb-phone-damage-canvas';
+            canvas.id = 'lb-brokenphone-canvas';
             Object.assign(canvas.style, {
                 display: 'block',
                 position: 'absolute',
@@ -232,21 +235,21 @@
             });
             overlay.appendChild(canvas);
         }
-        let hackScreen = overlay.querySelector('#lb-phone-damage-hack');
+        let hackScreen = overlay.querySelector('#lb-brokenphone-hack');
         if (!hackScreen) {
             hackScreen = targetDocument.createElement('div');
-            hackScreen.id = 'lb-phone-damage-hack';
+            hackScreen.id = 'lb-brokenphone-hack';
             Object.assign(hackScreen.style, {
                 position: 'absolute',
                 inset: '0',
                 display: 'none',
                 alignItems: 'center',
                 justifyContent: 'center',
-                background: '#101216',
+                background: '#0b0d10',
                 pointerEvents: 'none'
             });
             const hackImage = targetDocument.createElement('img');
-            hackImage.id = 'lb-phone-damage-hack-image';
+            hackImage.id = 'lb-brokenphone-hack-image';
             hackImage.alt = '';
             hackImage.draggable = false;
             Object.assign(hackImage.style, {
@@ -262,10 +265,10 @@
             overlay.appendChild(hackScreen);
         }
         
-        let hackText = hackScreen.querySelector('#lb-phone-damage-hack-text');
+        let hackText = hackScreen.querySelector('#lb-brokenphone-hack-text');
         if (!hackText) {
             hackText = targetDocument.createElement('div');
-            hackText.id = 'lb-phone-damage-hack-text';
+            hackText.id = 'lb-brokenphone-hack-text';
             Object.assign(hackText.style, {
                 position: 'absolute',
                 bottom: '18%',
@@ -295,10 +298,10 @@
             hackScreen.appendChild(hackText);
         }
         
-        let scanlines = hackScreen.querySelector('#lb-phone-damage-scanlines');
+        let scanlines = hackScreen.querySelector('#lb-brokenphone-scanlines');
         if (!scanlines) {
             scanlines = targetDocument.createElement('div');
-            scanlines.id = 'lb-phone-damage-scanlines';
+            scanlines.id = 'lb-brokenphone-scanlines';
             Object.assign(scanlines.style, {
                 position: 'absolute',
                 inset: '0',
@@ -317,10 +320,10 @@
             });
             hackScreen.appendChild(scanlines);
         }
-        let movingScanline = hackScreen.querySelector('#lb-phone-damage-moving-scanline');
+        let movingScanline = hackScreen.querySelector('#lb-brokenphone-moving-scanline');
         if (!movingScanline) {
             movingScanline = targetDocument.createElement('div');
-            movingScanline.id = 'lb-phone-damage-moving-scanline';
+            movingScanline.id = 'lb-brokenphone-moving-scanline';
             Object.assign(movingScanline.style, {
                 position: 'absolute',
                 top: '-2px',
@@ -347,9 +350,9 @@
 
     function removeOverlay() {
         const overlays = new Set([
-            currentPhoneContainer?.querySelector('#lb-phone-damage-overlay'),
-            observedDocument?.getElementById('lb-phone-damage-overlay'),
-            targetDocument?.getElementById('lb-phone-damage-overlay')
+            currentPhoneContainer?.querySelector('#lb-brokenphone-overlay'),
+            observedDocument?.getElementById('lb-brokenphone-overlay'),
+            targetDocument?.getElementById('lb-brokenphone-overlay')
         ]);
         overlays.forEach(function (overlay) {
             overlay?.remove();
@@ -468,10 +471,10 @@
     function render() {
         const overlay = ensureOverlay(currentPhoneContainer);
         if (!overlay) return;
-        const canvas = overlay.querySelector('#lb-phone-damage-canvas');
-        const hackScreen = overlay.querySelector('#lb-phone-damage-hack');
-        const hackImage = hackScreen?.querySelector('#lb-phone-damage-hack-image');
-        const hackTextEl = hackScreen?.querySelector('#lb-phone-damage-hack-text');
+        const canvas = overlay.querySelector('#lb-brokenphone-canvas');
+        const hackScreen = overlay.querySelector('#lb-brokenphone-hack');
+        const hackImage = hackScreen?.querySelector('#lb-brokenphone-hack-image');
+        const hackTextEl = hackScreen?.querySelector('#lb-brokenphone-hack-text');
         const level = Math.max(0, Math.min(3, Number(lastData.damageLevel) || 0));
         const hacked = lastData.isHacked === true;
         overlay.style.pointerEvents = touchFaultActive || hacked ? 'auto' : 'none';
@@ -559,7 +562,7 @@
             const message = error instanceof Error ? error.message : String(error);
             if (reportedLoadErrors.has(message)) return;
             reportedLoadErrors.add(message);
-            console.warn('[lb-phone-damage]', message);
+            console.warn('[lb-brokenphone]', message);
         });
     }
 
@@ -573,12 +576,12 @@
 
     window.addEventListener('message', function (event) {
         if (!event.data) return;
-        if (event.data.action === 'lb-phone-damage:touchFault') {
+        if (event.data.action === 'lb-brokenphone:touchFault') {
             touchFaultActive = event.data.active === true;
             scheduleRender();
             return;
         }
-        if (event.data.action !== 'lb-phone-damage:update') return;
+        if (event.data.action !== 'lb-brokenphone:update') return;
         lastData = event.data;
         scheduleRender();
     });

@@ -1,4 +1,4 @@
-# LB Phone Damage — Version 1.0 Plan
+# LB Broken Phone — Version 1.0 Plan
 
 ## Ziel
 
@@ -65,13 +65,13 @@ Severe ─┘
 Öffentlicher Export:
 
 ```lua
-exports["lb-phone-damage"]:RepairPhone(source)
+exports["lb-brokenphone"]:RepairPhone(source)
 ```
 
 Für ein konkretes Phone:
 
 ```lua
-exports["lb-phone-damage"]:RepairPhoneByNumber(phoneNumber)
+exports["lb-brokenphone"]:RepairPhoneByNumber(phoneNumber)
 ```
 
 ---
@@ -155,7 +155,7 @@ Dadurch sieht dasselbe beschädigte Phone immer gleich aus.
 Eigene Resource:
 
 ```text
-lb-phone-damage
+lb-brokenphone
 ```
 
 mit transparenter NUI.
@@ -470,7 +470,7 @@ Das reicht für praktisch alle Integrationen.
 Beispiel Unfall-Mod:
 
 ```lua
-exports["lb-phone-damage"]:ApplyPhoneDamage(
+exports["lb-brokenphone"]:ApplyPhoneDamage(
     source,
     2,
     "vehicle_crash"
@@ -632,7 +632,7 @@ testen:
 
 ```text
 Phone schließen/öffnen
-lb-phone-damage restart
+lb-brokenphone restart
 lb-phone restart
 Spieler reconnect
 Server restart
@@ -652,7 +652,7 @@ gleicher Seed
 Kleine Struktur:
 
 ```text
-lb-phone-damage/
+lb-brokenphone/
 ├── fxmanifest.lua
 ├── config.lua
 ├── client.lua
@@ -679,7 +679,7 @@ Wenn einzelne Dateien später zu groß werden, können sie immer noch geteilt we
 # 24. Test-Resource
 
 ```text
-lb-phone-damage-test/
+lb-brokenphone-test/
 ├── fxmanifest.lua
 └── server.lua
 ```
@@ -784,7 +784,7 @@ Crash / andere Mod
 ApplyPhoneDamage()
         │
         ▼
-lb-phone-damage SERVER
+lb-brokenphone SERVER
         │
         ├─ phone number
         ├─ DB
