@@ -41,6 +41,8 @@ directory contains development files and is not intended for server installation
    installation. JSON persistence must be selected explicitly with
    `Config.Database.mode = 'json'`; the resource never switches persistence
    drivers automatically.
+   Automatic gameplay damage requires OneSync because its client reports are
+   checked against server-side ped/vehicle snapshots and explosion events.
 4. Damage and repair test/admin commands are disabled by default. To enable
    them for administrators, set `Config.Commands.enabled = true`, keep
    `Config.Commands.restricted = true`, and grant ACE access:
@@ -456,3 +458,17 @@ and deduplicate it server-side before calling the export.
 Use `ApplyPhoneDamageInArea(coords, radius, level, cause)` when an event should
 apply a fixed minimum level instead. Players outside the radius or without an
 equipped phone are skipped.
+
+### DOM overlay compatibility
+
+The visual damage renderer attaches to LB Phone's sibling iframe and currently
+locates its host through the `lb-phone` frame and `.phone-container` selector.
+These are internal DOM details rather than a public LB Phone extension API, so
+an LB Phone update can require adding a selector to
+`PHONE_CONTAINER_SELECTORS` in `html/lb-brokenphone.js`.
+
+The overlay intentionally captures input only while hack, touch-fault, or
+burned-pixel blocking is active. Other resources that also inject overlays or
+capture listeners directly into the LB Phone iframe can conflict during those
+states, especially when they rely on their own highest z-index layer. Test such
+DOM mods together after either resource is updated.

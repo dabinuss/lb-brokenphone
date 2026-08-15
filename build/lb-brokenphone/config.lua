@@ -55,12 +55,15 @@ Config.Persistence = {
     batchSize = 50,       -- Maximum phone records written by one multi-row query.
     readBatchSize = 200,  -- Maximum phone numbers loaded by one cache hydration query.
     batchDelay = 25,      -- Milliseconds yielded between database/client batches.
-    resolveYieldEvery = 100 -- Yield after resolving this many equipped phone numbers.
+    resolveYieldEvery = 100, -- Yield after resolving this many equipped phone numbers.
+    cacheTtl = 3600000,      -- Evict inactive phone states after one hour.
+    cacheCleanupInterval = 600000 -- Sweep the inactive cache every ten minutes.
 }
 
 -- Protect the client-triggered initial phone sync from duplicate requests.
 Config.Sync = {
-    networkRateLimit = 1000 -- Minimum milliseconds between sync requests per player.
+    networkRateLimit = 1000, -- Minimum milliseconds between sync requests per player.
+    hydrationWindow = 25     -- Collect restart bursts into grouped cache reads.
 }
 
 -- Time in milliseconds before opening/closing transitions are considered complete.
@@ -97,6 +100,9 @@ Config.AutoDamage = {
     successCooldown = 30000, -- Block every automatic cause after one successful phone damage.
     clientDebounce = 1000,   -- Minimum milliseconds between reports of the same cause on a client.
     damageReference = 100,   -- Health/armour loss treated as severity 1.0 for combat damage.
+    snapshotInterval = 200,  -- Server-side player/vehicle sampling interval.
+    evidenceWindow = 2000,   -- Maximum age of server-observed damage evidence.
+    explosionEvidenceRadius = 30.0, -- Required proximity to a server-observed explosion.
 
     vehicle = {
         pollInterval = 100,           -- Vehicle crash sampling interval in milliseconds.
@@ -156,6 +162,7 @@ Config.AutoFireDamage = {
     incidentEndGrace = 750,   -- Wait for delayed fire ticks after the flames stop.
     networkRateLimit = 2000,  -- Minimum interval between raw incident reports per player.
     cooldown = 45000,         -- One server-side chance roll per player within this interval.
+    idlePollInterval = 750,   -- Slower client polling while the player is not burning.
 
     light = {
         minHealthLoss = 5,
@@ -270,8 +277,11 @@ assertInteger('Config.Persistence.batchSize', Config.Persistence.batchSize, 1)
 assertInteger('Config.Persistence.readBatchSize', Config.Persistence.readBatchSize, 1)
 assertInteger('Config.Persistence.batchDelay', Config.Persistence.batchDelay, 0)
 assertInteger('Config.Persistence.resolveYieldEvery', Config.Persistence.resolveYieldEvery, 1)
+assertInteger('Config.Persistence.cacheTtl', Config.Persistence.cacheTtl, 60000)
+assertInteger('Config.Persistence.cacheCleanupInterval', Config.Persistence.cacheCleanupInterval, 1000)
 assert(type(Config.Sync) == 'table', 'Config.Sync must be a table')
 assertInteger('Config.Sync.networkRateLimit', Config.Sync.networkRateLimit, 0)
+assertInteger('Config.Sync.hydrationWindow', Config.Sync.hydrationWindow, 0)
 assert(type(Config.Transition) == 'table', 'Config.Transition must be a table')
 assertInteger('Config.Transition.openDuration', Config.Transition.openDuration, 0)
 assertInteger('Config.Transition.closeDuration', Config.Transition.closeDuration, 0)
@@ -287,6 +297,9 @@ assertInteger('Config.AutoDamage.networkRateLimit', Config.AutoDamage.networkRat
 assertInteger('Config.AutoDamage.successCooldown', Config.AutoDamage.successCooldown, 0)
 assertInteger('Config.AutoDamage.clientDebounce', Config.AutoDamage.clientDebounce, 0)
 assertNumberRange('Config.AutoDamage.damageReference', Config.AutoDamage.damageReference, 1, 10000)
+assertInteger('Config.AutoDamage.snapshotInterval', Config.AutoDamage.snapshotInterval, 50)
+assertInteger('Config.AutoDamage.evidenceWindow', Config.AutoDamage.evidenceWindow, Config.AutoDamage.snapshotInterval)
+assertNumberRange('Config.AutoDamage.explosionEvidenceRadius', Config.AutoDamage.explosionEvidenceRadius, 1, 200)
 assert(type(Config.AutoDamage.vehicle) == 'table', 'Config.AutoDamage.vehicle must be a table')
 assertInteger('Config.AutoDamage.vehicle.pollInterval', Config.AutoDamage.vehicle.pollInterval, 50)
 assertInteger('Config.AutoDamage.vehicle.idlePollInterval', Config.AutoDamage.vehicle.idlePollInterval, 100)
@@ -308,6 +321,7 @@ assertInteger('Config.AutoFireDamage.pollInterval', Config.AutoFireDamage.pollIn
 assertInteger('Config.AutoFireDamage.incidentEndGrace', Config.AutoFireDamage.incidentEndGrace, 0)
 assertInteger('Config.AutoFireDamage.networkRateLimit', Config.AutoFireDamage.networkRateLimit, 0)
 assertInteger('Config.AutoFireDamage.cooldown', Config.AutoFireDamage.cooldown, 0)
+assertInteger('Config.AutoFireDamage.idlePollInterval', Config.AutoFireDamage.idlePollInterval, 100)
 for _, levelName in ipairs({ 'light', 'medium' }) do
     local levelConfig = Config.AutoFireDamage[levelName]
     local path = ('Config.AutoFireDamage.%s'):format(levelName)

@@ -218,6 +218,7 @@ CreateThread(function()
 
         previousPed = pedExists and ped or nil
         previousHealth = pedExists and health or nil
-        Wait(Config.AutoFireDamage.pollInterval)
+        Wait((onFire or incident) and Config.AutoFireDamage.pollInterval
+            or Config.AutoFireDamage.idlePollInterval)
     end
 end)

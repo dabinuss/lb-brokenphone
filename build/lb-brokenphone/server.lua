@@ -13,6 +13,9 @@ local damageColor = Config.DamageColor == 'white' and 'white' or 'black'
 local hackTimerTokens = {}
 local lastSyncRequestBySource = {}
 local syncPendingBySource = {}
+local lastAccessByPhone = {}
+local queuedSyncs = {}
+local syncBatchScheduled = false
 local scheduleHackExpiry
 local clearHackUnlocked
 local hackBulkPhones
@@ -143,10 +146,10 @@ local function ensureDatabase(callback)
                     return failDatabaseStart(err or 'database_initialization_failed')
                 end
                 local migrations = {
-                    ('ALTER TABLE `%s` ADD COLUMN IF NOT EXISTS `fire_level` TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER `damage_seed`'):format(tableName),
-                    ('ALTER TABLE `%s` ADD COLUMN IF NOT EXISTS `fire_seed` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `fire_level`'):format(tableName),
-                    ('ALTER TABLE `%s` ADD COLUMN IF NOT EXISTS `is_hacked` TINYINT(1) UNSIGNED NOT NULL DEFAULT 0 AFTER `damage_seed`'):format(tableName),
-                    ('ALTER TABLE `%s` ADD COLUMN IF NOT EXISTS `hack_expires_at` BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER `is_hacked`'):format(tableName)
+                    { name = 'fire_level', definition = 'TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER `damage_seed`' },
+                    { name = 'fire_seed', definition = 'INT UNSIGNED NOT NULL DEFAULT 0 AFTER `fire_level`' },
+                    { name = 'is_hacked', definition = 'TINYINT(1) UNSIGNED NOT NULL DEFAULT 0 AFTER `damage_seed`' },
+                    { name = 'hack_expires_at', definition = 'BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER `is_hacked`' }
                 }
                 local function runMigration(index)
                     if index > #migrations then
@@ -180,11 +183,27 @@ local function ensureDatabase(callback)
                             end, GetCurrentResourceName(), true)
                         end, GetCurrentResourceName(), true)
                     end
-                    exports.oxmysql.query(nil, migrations[index], {}, function(migrationResult, migrationError)
-                        if migrationError or migrationResult == nil then
-                            return failDatabaseStart(migrationError or 'database_migration_failed')
+                    local migration = migrations[index]
+                    local columnSql = [[
+                        SELECT 1 AS present
+                        FROM information_schema.COLUMNS
+                        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?
+                        LIMIT 1
+                    ]]
+                    exports.oxmysql.query(nil, columnSql, { tableName, migration.name }, function(rows, columnError)
+                        if columnError or rows == nil then
+                            return failDatabaseStart(columnError or 'database_migration_failed')
                         end
-                        runMigration(index + 1)
+                        if rows[1] then return runMigration(index + 1) end
+
+                        local alterSql = ('ALTER TABLE `%s` ADD COLUMN `%s` %s')
+                            :format(tableName, migration.name, migration.definition)
+                        exports.oxmysql.query(nil, alterSql, {}, function(migrationResult, migrationError)
+                            if migrationError or migrationResult == nil then
+                                return failDatabaseStart(migrationError or 'database_migration_failed')
+                            end
+                            runMigration(index + 1)
+                        end, GetCurrentResourceName(), true)
                     end, GetCurrentResourceName(), true)
                 end
                 runMigration(1)
@@ -419,6 +438,7 @@ end
 local function getCachedDamageUnlocked(phoneNumber)
     phoneNumber = normalizePhoneNumber(phoneNumber)
     if not phoneNumber then return nil, 'invalid_phone_number' end
+    lastAccessByPhone[phoneNumber] = GetGameTimer()
     if damageByPhone[phoneNumber] then return copyDamageState(damageByPhone[phoneNumber]) end
 
     local result, err = awaitResult(function(done)
@@ -740,6 +760,7 @@ local function hydrateDamageCacheUnlocked(phoneNumbers)
     local missing = {}
     for i = 1, #phoneNumbers do
         local phoneNumber = phoneNumbers[i]
+        lastAccessByPhone[phoneNumber] = GetGameTimer()
         if not damageByPhone[phoneNumber] then missing[#missing + 1] = phoneNumber end
     end
     if #missing == 0 then return true end
@@ -1273,6 +1294,71 @@ local function hasRepairAllPermission(playerSource)
     return IsPlayerAceAllowed(playerSource, ('command.%s'):format(Config.Commands.repairAll))
 end
 
+local function flushQueuedSyncs()
+    syncBatchScheduled = false
+    local batch = queuedSyncs
+    queuedSyncs = {}
+    if #batch == 0 then return end
+
+    CreateThread(function()
+        local invoked, success, syncError = pcall(function()
+            return runManaged(function()
+                local phones = {}
+                local seen = {}
+                for i = 1, #batch do
+                    local request = batch[i]
+                    if syncPendingBySource[request.playerSource] == request.token
+                        and activePhoneBySource[request.playerSource] == request.phoneNumber
+                        and not seen[request.phoneNumber] then
+                        seen[request.phoneNumber] = true
+                        phones[#phones + 1] = request.phoneNumber
+                    end
+                end
+
+                local hydrated, hydrateError = hydrateDamageCacheUnlocked(phones)
+                if not hydrated then return false, hydrateError end
+
+                for i = 1, #batch do
+                    local request = batch[i]
+                    if syncPendingBySource[request.playerSource] == request.token then
+                        syncPendingBySource[request.playerSource] = nil
+                        if activePhoneBySource[request.playerSource] == request.phoneNumber then
+                            local state = damageByPhone[request.phoneNumber]
+                            if state then sendDamageState(request.playerSource, request.phoneNumber, state) end
+                        end
+                    end
+                end
+                return true
+            end)
+        end)
+
+        if not invoked or not success then
+            print(('^1[lb-brokenphone] Batched phone sync failed: %s^7'):format(
+                tostring(invoked and syncError or success)
+            ))
+        end
+        for i = 1, #batch do
+            local request = batch[i]
+            if syncPendingBySource[request.playerSource] == request.token then
+                syncPendingBySource[request.playerSource] = nil
+            end
+        end
+    end)
+end
+
+local function queuePhoneSync(playerSource, phoneNumber)
+    local token = {}
+    syncPendingBySource[playerSource] = token
+    queuedSyncs[#queuedSyncs + 1] = {
+        playerSource = playerSource,
+        phoneNumber = phoneNumber,
+        token = token
+    }
+    if syncBatchScheduled then return end
+    syncBatchScheduled = true
+    SetTimeout(Config.Sync.hydrationWindow, flushQueuedSyncs)
+end
+
 RegisterNetEvent('lb-brokenphone:server:syncPhone', function()
     local playerSource = source
     local now = GetGameTimer()
@@ -1285,23 +1371,7 @@ RegisterNetEvent('lb-brokenphone:server:syncPhone', function()
     local phoneNumber = resolveEquippedPhone(playerSource)
     setActivePhone(playerSource, phoneNumber)
     if phoneNumber then
-        local syncToken = {}
-        syncPendingBySource[playerSource] = syncToken
-        CreateThread(function()
-            local ok, err = pcall(function()
-                runManaged(function()
-                    return syncPhoneUnlocked(playerSource, phoneNumber)
-                end)
-            end)
-            if syncPendingBySource[playerSource] == syncToken then
-                syncPendingBySource[playerSource] = nil
-            end
-            if not ok then
-                print(('^1[lb-brokenphone] Phone sync failed for source %d: %s^7'):format(
-                    playerSource, tostring(err)
-                ))
-            end
-        end)
+        queuePhoneSync(playerSource, phoneNumber)
     end
 end)
 
@@ -1310,13 +1380,7 @@ AddEventHandler('lb-phone:numberChanged', function(playerSource)
     if not playerSource then return end
     local phoneNumber = resolveEquippedPhone(playerSource)
     setActivePhone(playerSource, phoneNumber)
-    if phoneNumber then
-        CreateThread(function()
-            runManaged(function()
-                return syncPhoneUnlocked(playerSource, phoneNumber)
-            end)
-        end)
-    end
+    if phoneNumber then queuePhoneSync(playerSource, phoneNumber) end
 end)
 
 AddEventHandler('playerDropped', function()
@@ -1642,4 +1706,23 @@ AddEventHandler('onResourceStart', function(resourceName)
     if resourceName ~= GetCurrentResourceName() then return end
     math.randomseed(os.time())
     ensureDatabase(function() end)
+end)
+
+CreateThread(function()
+    while true do
+        Wait(Config.Persistence.cacheCleanupInterval)
+        local now = GetGameTimer()
+        runManaged(function()
+            for phoneNumber, lastAccess in pairs(lastAccessByPhone) do
+                local state = damageByPhone[phoneNumber]
+                local hasTimedHack = state and state.isHacked and state.hackExpiresAt > os.time()
+                if not activeSourcesByPhone[phoneNumber] and not hasTimedHack
+                    and (now < lastAccess or now - lastAccess >= Config.Persistence.cacheTtl) then
+                    damageByPhone[phoneNumber] = nil
+                    lastAccessByPhone[phoneNumber] = nil
+                    hackTimerTokens[phoneNumber] = nil
+                end
+            end
+        end)
+    end
 end)

@@ -89,7 +89,10 @@
     let phoneHostObserver = null;
     let resizeObserver = null;
     let renderFrame = null;
+    let resizeTimer = null;
+    let phoneCheckFrame = null;
     let connectTimer = null;
+    const PHONE_CONTAINER_SELECTORS = ['.phone-container'];
     const imageCache = new Map();
     const reportedLoadErrors = new Set();
 
@@ -140,7 +143,12 @@
     const loadCrackImage = loadAssetImage;
 
     function getPhoneContainer() {
-        return targetDocument?.querySelector('.phone-container') || null;
+        if (!targetDocument) return null;
+        for (const selector of PHONE_CONTAINER_SELECTORS) {
+            const container = targetDocument.querySelector(selector);
+            if (container) return container;
+        }
+        return null;
     }
 
     function assetUrl(path, fallback) {
@@ -435,6 +443,8 @@
     function detachFromCurrentContainer() {
         if (resizeObserver) resizeObserver.disconnect();
         resizeObserver = null;
+        if (resizeTimer !== null) window.clearTimeout(resizeTimer);
+        resizeTimer = null;
         fireInputMask = null;
         removeOverlay();
         currentPhoneContainer = null;
@@ -442,7 +452,13 @@
 
     function attachToPhoneContainer(container) {
         ensureOverlay(container);
-        resizeObserver = new ResizeObserver(scheduleRender);
+        resizeObserver = new ResizeObserver(function () {
+            if (resizeTimer !== null) window.clearTimeout(resizeTimer);
+            resizeTimer = window.setTimeout(function () {
+                resizeTimer = null;
+                scheduleRender();
+            }, 75);
+        });
         resizeObserver.observe(container);
     }
 
@@ -493,6 +509,14 @@
 
         attachToPhoneContainer(currentPhoneContainer);
         scheduleRender();
+    }
+
+    function schedulePhoneContainerCheck() {
+        if (phoneCheckFrame !== null) return;
+        phoneCheckFrame = window.requestAnimationFrame(function () {
+            phoneCheckFrame = null;
+            checkPhoneContainer();
+        });
     }
 
     async function composeDamage(canvas, level, seed, damageColor, token, width, height) {
@@ -817,9 +841,18 @@
             'touchstart', 'touchend', 'contextmenu', 'wheel'].forEach(function (type) {
             targetWindow.addEventListener(type, blockDamagedInput, { capture: true, passive: false });
         });
-        phoneHostObserver = new MutationObserver(checkPhoneContainer);
+        phoneHostObserver = new MutationObserver(schedulePhoneContainerCheck);
         phoneHostObserver.observe(targetDocument.documentElement, { childList: true, subtree: true });
         checkPhoneContainer();
+    }
+
+    function scheduleConnectionCheck() {
+        if (connectTimer !== null) window.clearTimeout(connectTimer);
+        connectTimer = window.setTimeout(function () {
+            connectTimer = null;
+            connectRenderer();
+            scheduleConnectionCheck();
+        }, observedDocument ? 5000 : 1000);
     }
 
     function disconnectObservedDocument() {
@@ -834,6 +867,8 @@
         }
         if (phoneHostObserver) phoneHostObserver.disconnect();
         phoneHostObserver = null;
+        if (phoneCheckFrame !== null) window.cancelAnimationFrame(phoneCheckFrame);
+        phoneCheckFrame = null;
         detachFromCurrentContainer();
         observedWindow = null;
         observedDocument = null;
@@ -843,7 +878,7 @@
         renderToken += 1;
         if (renderFrame !== null) window.cancelAnimationFrame(renderFrame);
         renderFrame = null;
-        if (connectTimer !== null) window.clearInterval(connectTimer);
+        if (connectTimer !== null) window.clearTimeout(connectTimer);
         connectTimer = null;
         stopHackSound();
         hackAudio = null;
@@ -856,7 +891,7 @@
     }
 
     connectRenderer();
-    connectTimer = window.setInterval(connectRenderer, 1000);
+    scheduleConnectionCheck();
     window.addEventListener('pagehide', cleanup);
     window.addEventListener('beforeunload', cleanup);
 })();
