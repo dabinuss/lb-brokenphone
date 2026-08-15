@@ -107,7 +107,17 @@ local function ensureDatabase(callback)
     if databaseStarting then return end
     databaseStarting = true
 
-    if GetResourceState('oxmysql') == 'started' then
+    if Config.Database.mode == 'json' then
+        loadFallbackData()
+        finishDatabaseStart('json')
+        return
+    end
+
+    if GetResourceState('oxmysql') ~= 'started' then
+        return failDatabaseStart('oxmysql_not_started')
+    end
+
+    do
         local sql = ([=[
             CREATE TABLE IF NOT EXISTS `%s` (
                 `phone_number` VARCHAR(32) NOT NULL,
@@ -174,12 +184,6 @@ local function ensureDatabase(callback)
         return
     end
 
-    if not Config.Database.allowJsonFallback then
-        return failDatabaseStart('oxmysql_not_started')
-    end
-
-    loadFallbackData()
-    finishDatabaseStart('json')
 end
 
 local function query(sql, params, callback)
@@ -187,6 +191,13 @@ local function query(sql, params, callback)
         exports.oxmysql.query(nil, sql, params or {}, callback, GetCurrentResourceName(), true)
     end)
     if not invoked then callback(nil, tostring(invokeError)) end
+end
+
+local function transaction(queries, callback)
+    local invoked, invokeError = pcall(function()
+        exports.oxmysql.transaction(nil, queries, nil, callback, GetCurrentResourceName(), true)
+    end)
+    if not invoked then callback(false, tostring(invokeError)) end
 end
 
 local function loadDamageFromStorage(phoneNumber, callback)
@@ -465,26 +476,27 @@ local function repairByNumberUnlocked(phoneNumber)
 end
 
 clearHackUnlocked = function(phoneNumber, current, cause)
-    current = copyDamageState(current)
-    current.isHacked = false
-    current.hackExpiresAt = 0
+    local previous = copyDamageState(current)
+    local cleared = copyDamageState(current)
+    cleared.isHacked = false
+    cleared.hackExpiresAt = 0
     hackTimerTokens[phoneNumber] = (hackTimerTokens[phoneNumber] or 0) + 1
-    local success, err = awaitResult(function(done) persistWholeState(phoneNumber, current, done) end)
+    local success, err = awaitResult(function(done) persistWholeState(phoneNumber, cleared, done) end)
     if not success then
-        scheduleHackExpiry(phoneNumber, current)
+        scheduleHackExpiry(phoneNumber, previous, Config.Hack.expiryRetryDelay)
         return false, err
     end
-    damageByPhone[phoneNumber] = current
-    notifyPhoneUsers(phoneNumber, current)
+    damageByPhone[phoneNumber] = cleared
+    notifyPhoneUsers(phoneNumber, cleared)
     debugLog('Hack removed', phoneNumber, cause or 'unknown')
-    return true, nil, copyDamageState(current)
+    return true, nil, copyDamageState(cleared)
 end
 
-scheduleHackExpiry = function(phoneNumber, state)
+scheduleHackExpiry = function(phoneNumber, state, minimumDelay)
     hackTimerTokens[phoneNumber] = (hackTimerTokens[phoneNumber] or 0) + 1
     local token = hackTimerTokens[phoneNumber]
     if not state.isHacked or state.hackExpiresAt <= 0 then return end
-    local delay = math.max(0, (state.hackExpiresAt - os.time()) * 1000)
+    local delay = math.max(tonumber(minimumDelay) or 0, (state.hackExpiresAt - os.time()) * 1000)
     SetTimeout(delay, function()
         CreateThread(function()
             runManaged(function()
@@ -876,16 +888,19 @@ local function persistBulkRepairUnlocked(phoneNumbers)
         end
 
         local phoneList = table.concat(placeholders, ', ')
-        local sql = ('UPDATE `%s` SET damage_level = 0, damage_seed = 0 WHERE phone_number IN (%s) AND is_hacked = 1')
+        local updateSql = ('UPDATE `%s` SET damage_level = 0, damage_seed = 0 WHERE phone_number IN (%s) AND is_hacked = 1')
             :format(tableName, phoneList)
-        local _, queryError = awaitResult(function(done) query(sql, params, done) end)
-        if queryError then return false, 'database_query_failed', applied end
         local deleteSql = ('DELETE FROM `%s` WHERE phone_number IN (%s) AND is_hacked = 0')
             :format(tableName, phoneList)
-        _, queryError = awaitResult(function(done)
-            query(deleteSql, params, done)
+        local committed, transactionError = awaitResult(function(done)
+            transaction({
+                { query = updateSql, values = params },
+                { query = deleteSql, values = params }
+            }, done)
         end)
-        if queryError then return false, 'database_query_failed', applied end
+        if transactionError or committed ~= true then
+            return false, 'database_transaction_failed', applied
+        end
 
         for index = first, last do
             local phoneNumber = phoneNumbers[index]

@@ -11,6 +11,18 @@ blocks the phone with a dark screen and animation, blocks input, and plays a
 sound when the screen is clicked. Existing cracks remain visible above the hack
 screen and can be repaired independently.
 
+## Screenshots
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/24cae25b-1d57-42c3-bd0e-05ba543d9770" width="180" alt="LB Broken Phone screenshot 1" />
+  &nbsp;
+  <img src="https://github.com/user-attachments/assets/93304f61-41e6-4694-9aa1-6a155d49a069" width="180" alt="LB Broken Phone screenshot 2" />
+  &nbsp;
+  <img src="https://github.com/user-attachments/assets/9df8cdfe-b341-4533-bf79-54e17fc7de30" width="180" alt="LB Broken Phone screenshot 3" />
+  &nbsp;
+  <img src="https://github.com/user-attachments/assets/958a9595-2121-4653-a2ab-cf546b55e2ce" width="180" alt="LB Broken Phone screenshot 4" />
+</p>
+
 ## Installation
 
 Use the ready-to-install resource from `build/lb-brokenphone`. The `dev`
@@ -18,10 +30,13 @@ directory contains development files and is not intended for server installation
 
 1. Copy `build/lb-brokenphone` into your resources folder as
    `lb-brokenphone`.
-2. Ensure `oxmysql`, `lb-phone`, then `lb-brokenphone` in that order.
+2. With the default MySQL mode, ensure `oxmysql`, `lb-phone`, then
+   `lb-brokenphone` in that order.
    No files inside `lb-phone` need to be copied, patched, or modified.
 3. The SQL table is created automatically. `database.sql` is supplied for manual
-   installation. If oxmysql is unavailable, the optional JSON fallback is used.
+   installation. JSON persistence must be selected explicitly with
+   `Config.Database.mode = 'json'`; the resource never switches persistence
+   drivers automatically.
 4. Damage and repair test/admin commands are disabled by default. To enable
    them for administrators, set `Config.Commands.enabled = true`, keep
    `Config.Commands.restricted = true`, and grant ACE access:
@@ -45,6 +60,18 @@ directory contains development files and is not intended for server installation
 
 ## Configuration
 
+Choose exactly one persistence driver. MySQL is the release default and fails
+closed when `oxmysql` is unavailable, preventing an accidental second data
+store:
+
+```lua
+Config.Database = {
+    mode = 'mysql', -- 'mysql' or 'json'
+    tableName = 'phone_damage',
+    jsonFile = 'data/phone_damage.json'
+}
+```
+
 Set the server-wide crack color in `config.lua`:
 
 ```lua
@@ -63,7 +90,8 @@ Config.Hack = {
     soundVolume = 0.65,
     soundCooldown = 300,
     defaultDuration = 300000,
-    maxDuration = 86400000
+    maxDuration = 86400000,
+    expiryRetryDelay = 5000
 }
 ```
 
@@ -75,7 +103,8 @@ screen. Further clicks restart it subject to `soundCooldown`.
 `defaultDuration` controls how long a hack created without an explicit duration
 lasts; `300000` is five minutes and `0` means permanent. `maxDuration` limits
 durations supplied by exports. Timed hacks persist across restarts because their
-expiry time is stored with the phone.
+expiry time is stored with the phone. If clearing an expired hack cannot be
+persisted, `expiryRetryDelay` controls the delay before the server retries.
 
 Large damage or repair events use batched reads and writes. The defaults are
 safe starting values for servers with several hundred players:

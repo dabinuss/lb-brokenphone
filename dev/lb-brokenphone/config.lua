@@ -15,13 +15,14 @@ Config.Hack = {
     soundVolume = 0.65,        -- Playback volume from 0.0 (silent) to 1.0 (full volume).
     soundCooldown = 300,       -- Minimum milliseconds between click sounds.
     defaultDuration = 300000,  -- Default hack duration in ms (300000 = 5 minutes, 0 = permanent).
-    maxDuration = 86400000     -- Largest accepted export duration in ms (86400000 = 24 hours).
+    maxDuration = 86400000,    -- Largest accepted export duration in ms (86400000 = 24 hours).
+    expiryRetryDelay = 5000    -- Retry delay when clearing an expired hack could not be persisted.
 }
 
 Config.Database = {
+    mode = 'mysql',                         -- Explicit persistence driver: 'mysql' or 'json'.
     tableName = 'phone_damage',              -- SQL table used for persistent phone damage.
-    jsonFile = 'data/phone_damage.json',     -- Resource-relative fallback file when oxmysql is unavailable.
-    allowJsonFallback = true                 -- Use the JSON file instead of failing when oxmysql is not started.
+    jsonFile = 'data/phone_damage.json'      -- Resource-relative file used only when mode is 'json'.
 }
 
 -- Bulk persistence settings for large events affecting hundreds of phones.
@@ -193,16 +194,17 @@ assertNumberRange('Config.Hack.soundVolume', Config.Hack.soundVolume, 0, 1)
 assertInteger('Config.Hack.soundCooldown', Config.Hack.soundCooldown, 0)
 assertInteger('Config.Hack.defaultDuration', Config.Hack.defaultDuration, 0)
 assertInteger('Config.Hack.maxDuration', Config.Hack.maxDuration, 0)
+assertInteger('Config.Hack.expiryRetryDelay', Config.Hack.expiryRetryDelay, 1000)
 assert(Config.Hack.defaultDuration <= Config.Hack.maxDuration,
     'Config.Hack.defaultDuration must not exceed Config.Hack.maxDuration')
 assert(type(Config.Debug) == 'boolean', 'Config.Debug must be true or false')
 assert(type(Config.Database) == 'table', 'Config.Database must be a table')
+assert(Config.Database.mode == 'mysql' or Config.Database.mode == 'json',
+    "Config.Database.mode must be 'mysql' or 'json'")
 assert(type(Config.Database.tableName) == 'string' and Config.Database.tableName:match('^[%w_]+$'),
     'Config.Database.tableName may only contain letters, numbers, and underscores')
 assert(type(Config.Database.jsonFile) == 'string' and Config.Database.jsonFile ~= '',
     'Config.Database.jsonFile must be a non-empty resource-relative path')
-assert(type(Config.Database.allowJsonFallback) == 'boolean',
-    'Config.Database.allowJsonFallback must be true or false')
 assert(type(Config.Persistence) == 'table', 'Config.Persistence must be a table')
 assertInteger('Config.Persistence.batchSize', Config.Persistence.batchSize, 1)
 assertInteger('Config.Persistence.readBatchSize', Config.Persistence.readBatchSize, 1)
