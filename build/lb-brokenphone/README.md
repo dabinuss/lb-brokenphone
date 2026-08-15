@@ -221,6 +221,24 @@ Medium is checked first and uses only its own chance; a failed medium roll does
 not fall back to light. Failed attempts consume `cooldown`. Fire levels are not
 cumulative: level 1 renders one light image and level 2 one medium image.
 
+### Damage integration layout
+
+Gameplay detection is intentionally separated from the persistent phone core:
+
+- `integrations/physical-damage.client.lua` detects combat and vehicle impacts.
+- `integrations/fire-damage.client.lua` tracks burn incidents with adaptive polling.
+- `integrations/damage-evidence.server.lua` keeps the single authoritative
+  vitality/vehicle snapshot stream used to verify both report types.
+- `integrations/physical-damage.server.lua` and `fire-damage.server.lua` own
+  their respective validation, rate limits, cooldowns, and probability rolls.
+- `integrations/shared.lua` contains only small numeric/time helpers shared by
+  those files.
+
+Add or tune physical causes in the physical files and `Config.AutoDamage`; fire
+behavior belongs in the fire files and `Config.AutoFireDamage`. Persistence,
+equipped-phone resolution, synchronization, repair, and bulk operations remain
+in `server.lua` and should not be duplicated in an integration.
+
 ## Test commands
 
 All commands are registered server-side. Run them in chat with a leading slash,

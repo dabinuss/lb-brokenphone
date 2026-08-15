@@ -1,11 +1,8 @@
-if not Config.AutoDamage.enabled and not Config.AutoFireDamage.enabled then return end
+if not Config.AutoDamage.enabled then return end
 
+local Shared = LBBrokenPhoneDamageShared
 local lastReportedAt = {}
 local lastCombatVitality = nil
-
-local function clamp(value)
-    return math.max(0.0, math.min(1.0, value))
-end
 
 local function canonicalHash(value)
     value = tonumber(value)
@@ -54,7 +51,7 @@ local function readVitality(ped)
     return math.max(0, GetEntityHealth(ped) - 100) + math.max(0, GetPedArmour(ped))
 end
 
-local function reportEvent(cause, severity)
+local function reportPhysicalDamage(cause, severity)
     local eventConfig = Config.AutoDamage.events[cause]
     if not eventConfig or not eventConfig.enabled then return end
 
@@ -62,7 +59,11 @@ local function reportEvent(cause, severity)
     local previous = lastReportedAt[cause]
     if previous and now >= previous and now - previous < Config.AutoDamage.clientDebounce then return end
     lastReportedAt[cause] = now
-    TriggerServerEvent('lb-brokenphone:server:autoDamageEvent', cause, clamp(severity))
+    TriggerServerEvent(
+        'lb-brokenphone:server:physicalDamage',
+        cause,
+        Shared.normalizeSeverity(severity)
+    )
 end
 
 local function resolveDamageWeapon(args)
@@ -90,7 +91,6 @@ local function classifyWeapon(weapon)
 end
 
 AddEventHandler('gameEventTriggered', function(name, args)
-    if not Config.AutoDamage.enabled then return end
     if name ~= 'CEventNetworkEntityDamage' then return end
 
     local ped = PlayerPedId()
@@ -105,14 +105,12 @@ AddEventHandler('gameEventTriggered', function(name, args)
         lastCombatVitality = after
         local vitalityLoss = before - after
         if vitalityLoss <= 0 then return end
-        reportEvent(cause, vitalityLoss / Config.AutoDamage.damageReference)
+        reportPhysicalDamage(cause, vitalityLoss / Config.AutoDamage.damageReference)
     end)
 end)
 
 CreateThread(function()
-    if not Config.AutoDamage.enabled then return end
     local vehicleState = nil
-
     while true do
         local ped = PlayerPedId()
         lastCombatVitality = readVitality(ped)
@@ -151,7 +149,7 @@ CreateThread(function()
                             bodyHealthLoss / Config.AutoDamage.vehicle.bodyHealthLossReference,
                             vitalityLoss / Config.AutoDamage.damageReference
                         )
-                        reportEvent('vehicle_crash', severity)
+                        reportPhysicalDamage('vehicle_crash', severity)
                         impact = nil
                     end
                 elseif impact then
@@ -168,57 +166,5 @@ CreateThread(function()
             }
             Wait(Config.AutoDamage.vehicle.pollInterval)
         end
-    end
-end)
-
-local function reportFireIncident(incident)
-    local healthLoss = math.max(0, incident.startHealth - incident.minimumHealth)
-    local duration = math.max(0,
-        incident.lastOnFireAt - incident.startedAt + Config.AutoFireDamage.pollInterval)
-    TriggerServerEvent('lb-brokenphone:server:autoFireDamageEvent', healthLoss, duration)
-end
-
-CreateThread(function()
-    if not Config.AutoFireDamage.enabled then return end
-    local incident = nil
-    local previousPed = nil
-    local previousHealth = nil
-
-    while true do
-        local now = GetGameTimer()
-        local ped = PlayerPedId()
-        local pedExists = ped and ped > 0 and DoesEntityExist(ped)
-        local onFire = pedExists and IsEntityOnFire(ped)
-        local health = pedExists and math.max(0, GetEntityHealth(ped)) or 0
-
-        if onFire then
-            if not incident or incident.ped ~= ped or now < incident.startedAt then
-                if incident then reportFireIncident(incident) end
-                incident = {
-                    ped = ped,
-                    startedAt = now,
-                    lastOnFireAt = now,
-                    startHealth = previousPed == ped and math.max(health, previousHealth or health) or health,
-                    minimumHealth = health
-                }
-            else
-                incident.lastOnFireAt = now
-                incident.minimumHealth = math.min(incident.minimumHealth, health)
-            end
-        elseif incident then
-            if incident.ped == ped then
-                incident.minimumHealth = math.min(incident.minimumHealth, health)
-            end
-            if incident.ped ~= ped or now < incident.lastOnFireAt
-                or now - incident.lastOnFireAt >= Config.AutoFireDamage.incidentEndGrace then
-                reportFireIncident(incident)
-                incident = nil
-            end
-        end
-
-        previousPed = pedExists and ped or nil
-        previousHealth = pedExists and health or nil
-        Wait((onFire or incident) and Config.AutoFireDamage.pollInterval
-            or Config.AutoFireDamage.idlePollInterval)
     end
 end)
