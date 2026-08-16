@@ -170,8 +170,15 @@
     }
 
     function startTypingEffect(element, text) {
+        const updateText = function (value) {
+            element.textContent = value;
+            const screen = element.closest('#lb-brokenphone-hack');
+            screen?.querySelectorAll('.lb-brokenphone-hack-echo-text').forEach(function (echoText) {
+                echoText.textContent = value;
+            });
+        };
         if (!text) {
-            element.textContent = '';
+            updateText('');
             return;
         }
         typeToken++;
@@ -181,7 +188,7 @@
         function typeNext() {
             if (currentToken !== typeToken || !hackActive()) return;
             
-            element.textContent = text.slice(0, i);
+            updateText(text.slice(0, i));
             i++;
             
             if (i <= text.length) {
@@ -387,6 +394,67 @@
             });
             hackScreen.appendChild(hackText);
         }
+
+        let hackEchoes = hackScreen.querySelector('#lb-brokenphone-hack-echoes');
+        if (!hackEchoes) {
+            hackEchoes = targetDocument.createElement('div');
+            hackEchoes.id = 'lb-brokenphone-hack-echoes';
+            Object.assign(hackEchoes.style, {
+                position: 'absolute',
+                inset: '0',
+                zIndex: '1',
+                overflow: 'hidden',
+                pointerEvents: 'none'
+            });
+            [-1, 1].forEach(function (direction) {
+                const echo = targetDocument.createElement('div');
+                echo.className = 'lb-brokenphone-hack-echo';
+                echo.dataset.direction = String(direction);
+                Object.assign(echo.style, {
+                    position: 'absolute',
+                    inset: '-2%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    overflow: 'hidden',
+                    opacity: '0',
+                    background: 'rgba(11, 13, 16, 0.16)',
+                    mixBlendMode: 'screen',
+                    pointerEvents: 'none',
+                    willChange: 'opacity, transform, filter'
+                });
+                const echoImage = targetDocument.createElement('img');
+                echoImage.className = 'lb-brokenphone-hack-echo-image';
+                echoImage.alt = '';
+                echoImage.draggable = false;
+                Object.assign(echoImage.style, {
+                    display: 'block',
+                    width: '50%',
+                    height: '50%',
+                    objectFit: 'contain',
+                    pointerEvents: 'none',
+                    userSelect: 'none'
+                });
+                const echoText = targetDocument.createElement('div');
+                echoText.className = 'lb-brokenphone-hack-echo-text';
+                Object.assign(echoText.style, {
+                    position: 'absolute',
+                    bottom: '18%',
+                    width: '100%',
+                    textAlign: 'center',
+                    color: direction < 0 ? '#ff174f' : '#00dcff',
+                    fontFamily: 'monospace',
+                    fontSize: '1.2rem',
+                    fontWeight: 'bold',
+                    whiteSpace: 'pre-wrap',
+                    pointerEvents: 'none'
+                });
+                echo.appendChild(echoImage);
+                echo.appendChild(echoText);
+                hackEchoes.appendChild(echo);
+            });
+            hackScreen.appendChild(hackEchoes);
+        }
         
         let scanlines = hackScreen.querySelector('#lb-brokenphone-scanlines');
         if (!scanlines) {
@@ -523,6 +591,7 @@
             screen: screen,
             image: screen?.querySelector('#lb-brokenphone-hack-image'),
             text: screen?.querySelector('#lb-brokenphone-hack-text'),
+            echoes: Array.from(screen?.querySelectorAll('.lb-brokenphone-hack-echo') || []),
             fx: screen?.querySelector('#lb-brokenphone-hack-glitch-fx'),
             slices: Array.from(screen?.querySelectorAll('.lb-brokenphone-hack-glitch-slice') || []),
             blackout: screen?.querySelector('#lb-brokenphone-hack-blackout'),
@@ -570,6 +639,12 @@
             elements.text.style.filter = 'none';
             elements.text.style.textShadow = '0 0 3px #00ff00';
         }
+        elements.echoes.forEach(function (echo) {
+            echo.style.display = 'none';
+            echo.style.opacity = '0';
+            echo.style.transform = 'none';
+            echo.style.filter = 'none';
+        });
         if (elements.fx) {
             elements.fx.style.opacity = '0';
             elements.fx.style.transform = 'none';
@@ -679,6 +754,41 @@
         ], { duration: Math.max(100, duration), easing: 'ease-out' });
     }
 
+    function runHackPhaseEcho(duration, ending) {
+        const elements = getHackElements();
+        if (!elements.screen) return;
+        duration = Math.max(500, Number(duration) || 5500);
+        animateHackElement(elements.screen, ending ? [
+            { opacity: 0.82, offset: 0 },
+            { opacity: 0.54, offset: 0.12 },
+            { opacity: 0.66, offset: 0.34 },
+            { opacity: 0.48, offset: 0.58 },
+            { opacity: 0.6, offset: 0.82 },
+            { opacity: 0, offset: 1 }
+        ] : [
+            { opacity: 0.42, offset: 0 },
+            { opacity: 0.62, offset: 0.16 },
+            { opacity: 0.48, offset: 0.38 },
+            { opacity: 0.68, offset: 0.64 },
+            { opacity: 0.82, offset: 0.86 },
+            { opacity: 1, offset: 1 }
+        ], { duration: duration, easing: 'steps(8, end)', fill: 'forwards' });
+
+        elements.echoes.forEach(function (echo, index) {
+            echo.style.display = 'flex';
+            const direction = Number(echo.dataset.direction) || (index === 0 ? -1 : 1);
+            const travel = 7 + index * 3;
+            animateHackElement(echo, [
+                { opacity: 0, transform: 'translate(0, 0) scale(1.01)', filter: 'none', offset: 0 },
+                { opacity: 0.2, transform: `translate(${direction * travel}px, ${-direction * 2}px) scale(1.025)`, filter: `hue-rotate(${direction * 28}deg) saturate(1.8)`, offset: 0.12 },
+                { opacity: 0.09, transform: `translate(${-direction * 4}px, ${direction}px) scale(1.015)`, filter: `hue-rotate(${-direction * 18}deg) saturate(1.45)`, offset: 0.32 },
+                { opacity: 0.24, transform: `translate(${direction * (travel + 5)}px, 0) scale(1.03)`, filter: `hue-rotate(${direction * 42}deg) saturate(2)`, offset: 0.57 },
+                { opacity: 0.1, transform: `translate(${direction * 3}px, ${direction * 2}px) scale(1.012)`, filter: `hue-rotate(${direction * 15}deg) saturate(1.5)`, offset: 0.8 },
+                { opacity: 0, transform: 'translate(0, 0) scale(1)', filter: 'none', offset: 1 }
+            ], { duration: duration, easing: 'steps(10, end)', fill: 'forwards' });
+        });
+    }
+
     function scheduleActiveHackGlitch(token) {
         if (token !== hackPhaseToken || hackPhase !== 'active') return;
         const minimum = Math.max(250, Number(lastData.hackActiveGlitchIntervalMin) || 2000);
@@ -713,6 +823,7 @@
 
         const duration = Math.max(1000, Number(lastData.hackStartDuration) || 5500);
         const scale = duration / 5500;
+        runHackPhaseEcho(duration, false);
         [
             [0, 420, 0.75],
             [900, 520, 1.0],
@@ -752,6 +863,7 @@
 
         const duration = Math.max(1000, Number(lastData.hackEndDuration) || 5500);
         const scale = duration / 5500;
+        runHackPhaseEcho(duration, true);
         [
             [0, 450, 0.85],
             [1100, 560, 1.1],
@@ -1059,6 +1171,9 @@
         if (hackImage) {
             const imageUrl = assetUrl(lastData.hackImage, 'hack/ahahah.gif');
             if (hackImage.src !== imageUrl) hackImage.src = imageUrl;
+            hackScreen.querySelectorAll('.lb-brokenphone-hack-echo-image').forEach(function (echoImage) {
+                if (echoImage.src !== imageUrl) echoImage.src = imageUrl;
+            });
         }
         syncHackPhase(phoneVisible);
         const hackVisualActive = hackPhase !== 'idle';
