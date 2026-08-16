@@ -17,14 +17,36 @@ and can be removed together with cracks or through dedicated fire-repair exports
 
 ## Screenshots
 
+#### Cracked display
+
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/24cae25b-1d57-42c3-bd0e-05ba543d9770" width="180" alt="LB Broken Phone screenshot 1" />
+  <img width="150" height="*" alt="grafik" src="https://github.com/user-attachments/assets/e82402c4-c363-4f35-a1d7-c44bd82bf05f" />
   &nbsp;
-  <img src="https://github.com/user-attachments/assets/93304f61-41e6-4694-9aa1-6a155d49a069" width="180" alt="LB Broken Phone screenshot 2" />
+  <img width="150" height="*" alt="grafik" src="https://github.com/user-attachments/assets/c9d12e68-123c-4d96-86da-b1489eed53a9" />
   &nbsp;
-  <img src="https://github.com/user-attachments/assets/9df8cdfe-b341-4533-bf79-54e17fc7de30" width="180" alt="LB Broken Phone screenshot 3" />
+  <img width="150" height="*" alt="grafik" src="https://github.com/user-attachments/assets/66add5d1-0a62-44a9-beee-016ed2385007" />
   &nbsp;
-  <img src="https://github.com/user-attachments/assets/958a9595-2121-4653-a2ab-cf546b55e2ce" width="180" alt="LB Broken Phone screenshot 4" />
+</p>
+
+#### Firedamage
+
+<p align="center">
+  <img width="150" height="*" alt="grafik" src="https://github.com/user-attachments/assets/f2deaac6-0e33-45a7-aa09-fed98dc44576" />
+  &nbsp;
+  <img width="150" height="*" alt="grafik" src="https://github.com/user-attachments/assets/45ce5164-4019-4872-a684-97c8d105360e" />
+  &nbsp;
+  <img width="150" height="*" alt="grafik" src="https://github.com/user-attachments/assets/05d7a406-1b17-4c84-8d2e-3fea0abc3e24" />
+</p>
+
+#### Hacked phone + Fully compatible with all sorts of damages
+
+<p align="center">
+  <img width="150" height="*" alt="grafik" src="https://github.com/user-attachments/assets/88e25dc6-44ca-4729-bfe5-6a050695ef7e" />
+  &nbsp;
+  <img width="150" height="*" alt="grafik" src="https://github.com/user-attachments/assets/6cde16d8-a281-47ef-a00f-2f78c6a470c8" />
+  &nbsp;
+  <img width="150" height="*" alt="grafik" src="https://github.com/user-attachments/assets/d1481e5c-f1e5-4049-8965-da474204f573" />
+  &nbsp;
 </p>
 
 ## Installation
