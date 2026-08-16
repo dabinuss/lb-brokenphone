@@ -38,7 +38,7 @@ and can be removed together with cracks or through dedicated fire-repair exports
   <img width="150" height="*" alt="grafik" src="https://github.com/user-attachments/assets/05d7a406-1b17-4c84-8d2e-3fea0abc3e24" />
 </p>
 
-#### Hacked phone + Fully compatible with alle damages
+#### Hacked phone + Fully compatible with all sorts of damages
 
 <p align="center">
   <img width="150" height="*" alt="grafik" src="https://github.com/user-attachments/assets/88e25dc6-44ca-4729-bfe5-6a050695ef7e" />
