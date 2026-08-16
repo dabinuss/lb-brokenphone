@@ -115,9 +115,16 @@ Configure the level-4 hack presentation in the same file:
 ```lua
 Config.Hack = {
     image = 'hack/ahahah.gif',
+    text = 'AH AH AH!',
     sound = 'hack/ahahah.ogg',
     soundVolume = 0.65,
     soundCooldown = 300,
+    startDuration = 5500,
+    endDuration = 5500,
+    activeGlitchIntervalMin = 2000,
+    activeGlitchIntervalMax = 5000,
+    activeGlitchDurationMin = 50,
+    activeGlitchDurationMax = 120,
     defaultDuration = 300000,
     maxDuration = 86400000,
     expiryRetryDelay = 5000
@@ -129,6 +136,13 @@ The paths are relative to `html`. `soundVolume` accepts `0.0` to `1.0`, and
 configured number of milliseconds.
 The sound also plays once whenever an already hacked phone is brought onto the
 screen. Further clicks restart it subject to `soundCooldown`.
+`startDuration` and `endDuration` control the staged RGB-split, horizontal-slice,
+blackout, and recovery sequences. Input remains blocked throughout both phases.
+The active glitch interval settings choose the random delay between short bursts;
+the duration settings control each burst. These effects run only while the hacked
+phone is visible and do not modify LB Phone's own DOM elements. The configured
+GIF, text, sound, and the permanent scanline effects remain active throughout the
+presentation.
 `defaultDuration` controls how long a hack created without an explicit duration
 lasts; `300000` is five minutes and `0` means permanent. `maxDuration` limits
 durations supplied by exports. Timed hacks persist across restarts because their

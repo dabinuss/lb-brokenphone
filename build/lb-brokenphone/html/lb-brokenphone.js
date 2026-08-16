@@ -71,13 +71,22 @@
         hackImage: 'hack/ahahah.gif',
         hackSound: 'hack/ahahah.ogg',
         hackSoundVolume: 0.65,
-        hackSoundCooldown: 300
+        hackSoundCooldown: 300,
+        hackStartDuration: 5500,
+        hackEndDuration: 5500,
+        hackActiveGlitchIntervalMin: 2000,
+        hackActiveGlitchIntervalMax: 5000,
+        hackActiveGlitchDurationMin: 50,
+        hackActiveGlitchDurationMax: 120
     };
     let touchFaultActive = false;
     let hackAudio = null;
     let hackAudioPath = null;
     let lastHackSoundAt = -Infinity;
-    let hackWasVisible = false;
+    let hackPhase = 'idle';
+    let hackPhaseToken = 0;
+    const hackTimers = new Set();
+    const hackAnimations = new Set();
     let fireInputMask = null;
     let typeToken = 0;
     let renderToken = 0;
@@ -157,7 +166,7 @@
     }
 
     function hackActive() {
-        return lastData.isHacked === true && lastData.state !== 'closed';
+        return hackPhase !== 'idle' && lastData.state !== 'closed';
     }
 
     function startTypingEffect(element, text) {
@@ -426,7 +435,364 @@
             });
             hackScreen.appendChild(movingScanline);
         }
+        let glitchFx = hackScreen.querySelector('#lb-brokenphone-hack-glitch-fx');
+        if (!glitchFx) {
+            glitchFx = targetDocument.createElement('div');
+            glitchFx.id = 'lb-brokenphone-hack-glitch-fx';
+            Object.assign(glitchFx.style, {
+                position: 'absolute',
+                inset: '0',
+                zIndex: '4',
+                opacity: '0',
+                backgroundImage: 'repeating-linear-gradient(90deg, rgba(255, 0, 68, 0.2) 0 2px, transparent 2px 7px, rgba(0, 220, 255, 0.18) 7px 9px, transparent 9px 15px)',
+                backgroundSize: '19px 100%',
+                mixBlendMode: 'screen',
+                pointerEvents: 'none',
+                willChange: 'opacity, transform, background-position'
+            });
+            hackScreen.appendChild(glitchFx);
+        }
+        let glitchSlices = hackScreen.querySelector('#lb-brokenphone-hack-glitch-slices');
+        if (!glitchSlices) {
+            glitchSlices = targetDocument.createElement('div');
+            glitchSlices.id = 'lb-brokenphone-hack-glitch-slices';
+            Object.assign(glitchSlices.style, {
+                position: 'absolute',
+                inset: '0',
+                zIndex: '5',
+                overflow: 'hidden',
+                pointerEvents: 'none'
+            });
+            for (let index = 0; index < 5; index += 1) {
+                const slice = targetDocument.createElement('div');
+                slice.className = 'lb-brokenphone-hack-glitch-slice';
+                Object.assign(slice.style, {
+                    position: 'absolute',
+                    left: '-6%',
+                    width: '112%',
+                    opacity: '0',
+                    background: index % 2 === 0
+                        ? 'rgba(0, 220, 255, 0.12)'
+                        : 'rgba(255, 0, 68, 0.12)',
+                    mixBlendMode: 'screen',
+                    pointerEvents: 'none',
+                    willChange: 'opacity, transform, clip-path'
+                });
+                glitchSlices.appendChild(slice);
+            }
+            hackScreen.appendChild(glitchSlices);
+        }
+        let blackout = hackScreen.querySelector('#lb-brokenphone-hack-blackout');
+        if (!blackout) {
+            blackout = targetDocument.createElement('div');
+            blackout.id = 'lb-brokenphone-hack-blackout';
+            Object.assign(blackout.style, {
+                position: 'absolute',
+                inset: '0',
+                zIndex: '6',
+                opacity: '0',
+                background: '#000',
+                pointerEvents: 'none',
+                willChange: 'opacity'
+            });
+            hackScreen.appendChild(blackout);
+        }
+        let flash = hackScreen.querySelector('#lb-brokenphone-hack-flash');
+        if (!flash) {
+            flash = targetDocument.createElement('div');
+            flash.id = 'lb-brokenphone-hack-flash';
+            Object.assign(flash.style, {
+                position: 'absolute',
+                inset: '0',
+                zIndex: '7',
+                opacity: '0',
+                background: '#dffcff',
+                mixBlendMode: 'screen',
+                pointerEvents: 'none',
+                willChange: 'opacity'
+            });
+            hackScreen.appendChild(flash);
+        }
         return overlay;
+    }
+
+    function getHackElements() {
+        const overlay = currentPhoneContainer?.querySelector('#lb-brokenphone-overlay');
+        const screen = overlay?.querySelector('#lb-brokenphone-hack');
+        return {
+            screen: screen,
+            image: screen?.querySelector('#lb-brokenphone-hack-image'),
+            text: screen?.querySelector('#lb-brokenphone-hack-text'),
+            fx: screen?.querySelector('#lb-brokenphone-hack-glitch-fx'),
+            slices: Array.from(screen?.querySelectorAll('.lb-brokenphone-hack-glitch-slice') || []),
+            blackout: screen?.querySelector('#lb-brokenphone-hack-blackout'),
+            flash: screen?.querySelector('#lb-brokenphone-hack-flash')
+        };
+    }
+
+    function trackHackAnimation(animation) {
+        if (!animation) return null;
+        hackAnimations.add(animation);
+        const forget = function () { hackAnimations.delete(animation); };
+        animation.onfinish = forget;
+        animation.oncancel = forget;
+        return animation;
+    }
+
+    function animateHackElement(element, keyframes, options) {
+        if (!element || typeof element.animate !== 'function') return null;
+        return trackHackAnimation(element.animate(keyframes, options));
+    }
+
+    function clearHackTimers() {
+        hackTimers.forEach(function (timer) { window.clearTimeout(timer); });
+        hackTimers.clear();
+    }
+
+    function clearHackAnimations() {
+        Array.from(hackAnimations).forEach(function (animation) { animation.cancel(); });
+        hackAnimations.clear();
+    }
+
+    function resetHackVisuals() {
+        const elements = getHackElements();
+        if (elements.screen) {
+            elements.screen.style.opacity = '1';
+            elements.screen.style.transform = 'none';
+            elements.screen.style.filter = 'none';
+        }
+        if (elements.image) {
+            elements.image.style.opacity = '1';
+            elements.image.style.transform = 'none';
+            elements.image.style.filter = 'none';
+        }
+        if (elements.text) {
+            elements.text.style.filter = 'none';
+            elements.text.style.textShadow = '0 0 3px #00ff00';
+        }
+        if (elements.fx) {
+            elements.fx.style.opacity = '0';
+            elements.fx.style.transform = 'none';
+        }
+        elements.slices.forEach(function (slice) {
+            slice.style.opacity = '0';
+            slice.style.transform = 'none';
+        });
+        if (elements.blackout) elements.blackout.style.opacity = '0';
+        if (elements.flash) elements.flash.style.opacity = '0';
+    }
+
+    function invalidateHackRuntime() {
+        hackPhaseToken += 1;
+        clearHackTimers();
+        clearHackAnimations();
+        resetHackVisuals();
+        return hackPhaseToken;
+    }
+
+    function scheduleHackTask(token, delay, callback) {
+        const timer = window.setTimeout(function () {
+            hackTimers.delete(timer);
+            if (token !== hackPhaseToken) return;
+            callback();
+        }, Math.max(0, delay));
+        hackTimers.add(timer);
+        return timer;
+    }
+
+    function randomBetween(minimum, maximum) {
+        return minimum + Math.random() * Math.max(0, maximum - minimum);
+    }
+
+    function runHackGlitchBurst(duration, strength) {
+        const elements = getHackElements();
+        if (!elements.screen) return;
+        duration = Math.max(25, Number(duration) || 80);
+        strength = Math.max(0.25, Number(strength) || 1);
+        const offsetX = Math.round(randomBetween(2, 5) * strength);
+        const offsetY = Math.max(1, Math.round(randomBetween(0.5, 2) * strength));
+        const skew = randomBetween(0.4, 1.4) * strength;
+
+        animateHackElement(elements.screen, [
+            { transform: 'translate(0, 0)', filter: 'none', offset: 0 },
+            { transform: `translate(${-offsetX}px, ${offsetY}px) skewX(${skew}deg)`, filter: `contrast(${1 + strength * 0.35}) brightness(${1 + strength * 0.12})`, offset: 0.25 },
+            { transform: `translate(${offsetX}px, ${-offsetY}px) skewX(${-skew}deg)`, filter: `contrast(${1 + strength * 0.55}) brightness(${Math.max(0.65, 1 - strength * 0.12)})`, offset: 0.62 },
+            { transform: 'translate(0, 0)', filter: 'none', offset: 1 }
+        ], { duration: duration, easing: 'steps(3, end)' });
+
+        animateHackElement(elements.image, [
+            { transform: 'translate(0, 0)', filter: 'none' },
+            { transform: `translateX(${offsetX}px) scaleX(${1 + strength * 0.015})`, filter: `drop-shadow(${-offsetX}px 0 rgba(255, 0, 68, 0.9)) drop-shadow(${offsetX}px 0 rgba(0, 220, 255, 0.9)) saturate(${1 + strength * 0.8})` },
+            { transform: `translateX(${-offsetX}px) scaleY(${1 + strength * 0.01})`, filter: `drop-shadow(${offsetX}px 0 rgba(255, 0, 68, 0.75)) drop-shadow(${-offsetX}px 0 rgba(0, 220, 255, 0.75))` },
+            { transform: 'translate(0, 0)', filter: 'none' }
+        ], { duration: duration, easing: 'steps(2, end)' });
+
+        animateHackElement(elements.text, [
+            { filter: 'none', textShadow: '0 0 3px #00ff00' },
+            { filter: `contrast(${1 + strength})`, textShadow: `${-offsetX}px 0 rgba(255, 0, 68, 0.9), ${offsetX}px 0 rgba(0, 220, 255, 0.9), 0 0 5px #00ff00` },
+            { filter: 'none', textShadow: '0 0 3px #00ff00' }
+        ], { duration: duration, easing: 'steps(2, end)' });
+
+        animateHackElement(elements.fx, [
+            { opacity: 0, transform: 'translateX(0)', backgroundPosition: '0 0' },
+            { opacity: Math.min(0.9, 0.3 + strength * 0.22), transform: `translateX(${offsetX}px)`, backgroundPosition: `${offsetX * 3}px 0` },
+            { opacity: Math.min(0.75, 0.2 + strength * 0.18), transform: `translateX(${-offsetX}px)`, backgroundPosition: `${-offsetX * 2}px 0` },
+            { opacity: 0, transform: 'translateX(0)', backgroundPosition: '0 0' }
+        ], { duration: duration, easing: 'steps(3, end)' });
+
+        elements.slices.forEach(function (slice, index) {
+            const top = randomBetween(4, 91);
+            const height = randomBetween(1.5, 7) * Math.min(1.6, strength);
+            const direction = index % 2 === 0 ? 1 : -1;
+            const travel = direction * Math.round(randomBetween(5, 14) * strength);
+            slice.style.top = `${top}%`;
+            slice.style.height = `${height}%`;
+            slice.style.clipPath = `polygon(0 ${randomBetween(0, 18)}%, 100% 0, 98% 100%, 2% ${randomBetween(82, 100)}%)`;
+            slice.style.backdropFilter = `hue-rotate(${direction * 35 * strength}deg) saturate(${1 + strength}) contrast(${1 + strength * 0.4})`;
+            slice.style.webkitBackdropFilter = slice.style.backdropFilter;
+            animateHackElement(slice, [
+                { opacity: 0, transform: 'translateX(0)' },
+                { opacity: Math.min(0.85, 0.28 + strength * 0.2), transform: `translateX(${travel}px)` },
+                { opacity: Math.min(0.65, 0.2 + strength * 0.15), transform: `translateX(${-travel * 0.6}px)` },
+                { opacity: 0, transform: 'translateX(0)' }
+            ], { duration: duration * randomBetween(0.75, 1.15), easing: 'steps(2, end)' });
+        });
+    }
+
+    function runHackBlackout(duration) {
+        const blackout = getHackElements().blackout;
+        animateHackElement(blackout, [
+            { opacity: 0 },
+            { opacity: 1, offset: 0.12 },
+            { opacity: 1, offset: 0.78 },
+            { opacity: 0 }
+        ], { duration: Math.max(100, duration), easing: 'steps(2, end)' });
+    }
+
+    function runHackFlash(duration) {
+        const flash = getHackElements().flash;
+        animateHackElement(flash, [
+            { opacity: 0 },
+            { opacity: 0.8, offset: 0.18 },
+            { opacity: 0.16, offset: 0.42 },
+            { opacity: 0 }
+        ], { duration: Math.max(100, duration), easing: 'ease-out' });
+    }
+
+    function scheduleActiveHackGlitch(token) {
+        if (token !== hackPhaseToken || hackPhase !== 'active') return;
+        const minimum = Math.max(250, Number(lastData.hackActiveGlitchIntervalMin) || 2000);
+        const maximum = Math.max(minimum, Number(lastData.hackActiveGlitchIntervalMax) || 5000);
+        scheduleHackTask(token, randomBetween(minimum, maximum), function () {
+            if (hackPhase !== 'active' || lastData.isHacked !== true || lastData.state === 'closed') return;
+            const durationMinimum = Math.max(25, Number(lastData.hackActiveGlitchDurationMin) || 50);
+            const durationMaximum = Math.max(durationMinimum, Number(lastData.hackActiveGlitchDurationMax) || 120);
+            runHackGlitchBurst(randomBetween(durationMinimum, durationMaximum), randomBetween(0.9, 1.55));
+            scheduleActiveHackGlitch(token);
+        });
+    }
+
+    function enterActiveHack(token) {
+        if (token !== hackPhaseToken || lastData.isHacked !== true || lastData.state === 'closed') return;
+        clearHackTimers();
+        clearHackAnimations();
+        resetHackVisuals();
+        hackPhase = 'active';
+        scheduleActiveHackGlitch(token);
+        scheduleRender();
+    }
+
+    function startHackIntroduction() {
+        const token = invalidateHackRuntime();
+        const elements = getHackElements();
+        if (!elements.screen) return;
+        hackPhase = 'starting';
+        elements.screen.style.display = 'flex';
+        playHackSound(true);
+        if (elements.text) startTypingEffect(elements.text, lastData.hackText);
+
+        const duration = Math.max(1000, Number(lastData.hackStartDuration) || 5500);
+        const scale = duration / 5500;
+        [
+            [0, 420, 0.75],
+            [900, 520, 1.0],
+            [1900, 600, 1.25],
+            [3000, 700, 1.55],
+            [4000, 650, 1.9]
+        ].forEach(function (burst) {
+            scheduleHackTask(token, burst[0] * scale, function () {
+                runHackGlitchBurst(burst[1] * scale, burst[2]);
+            });
+        });
+        scheduleHackTask(token, 4550 * scale, function () { runHackBlackout(500 * scale); });
+        scheduleHackTask(token, 5050 * scale, function () { runHackGlitchBurst(380 * scale, 1.15); });
+        scheduleHackTask(token, duration, function () { enterActiveHack(token); });
+    }
+
+    function finishHackEnding(token) {
+        if (token !== hackPhaseToken) return;
+        clearHackTimers();
+        clearHackAnimations();
+        resetHackVisuals();
+        hackPhase = 'idle';
+        typeToken += 1;
+        const screen = getHackElements().screen;
+        if (screen) screen.style.display = 'none';
+        stopHackSound();
+        scheduleRender();
+    }
+
+    function startHackEnding() {
+        const token = invalidateHackRuntime();
+        const elements = getHackElements();
+        if (!elements.screen) return;
+        hackPhase = 'ending';
+        typeToken += 1;
+        elements.screen.style.display = 'flex';
+
+        const duration = Math.max(1000, Number(lastData.hackEndDuration) || 5500);
+        const scale = duration / 5500;
+        [
+            [0, 450, 0.85],
+            [1100, 560, 1.1],
+            [2200, 650, 1.4],
+            [3300, 760, 1.85]
+        ].forEach(function (burst) {
+            scheduleHackTask(token, burst[0] * scale, function () {
+                runHackGlitchBurst(burst[1] * scale, burst[2]);
+            });
+        });
+        scheduleHackTask(token, 4100 * scale, function () { runHackBlackout(700 * scale); });
+        scheduleHackTask(token, 4750 * scale, function () {
+            runHackFlash(650 * scale);
+            animateHackElement(elements.screen, [
+                { opacity: 1, filter: 'brightness(1)' },
+                { opacity: 0.82, filter: 'brightness(1.8)', offset: 0.2 },
+                { opacity: 0, filter: 'brightness(1.15)' }
+            ], { duration: 750 * scale, easing: 'ease-out' });
+        });
+        scheduleHackTask(token, duration, function () { finishHackEnding(token); });
+    }
+
+    function stopHackImmediately() {
+        invalidateHackRuntime();
+        hackPhase = 'idle';
+        typeToken += 1;
+        const screen = getHackElements().screen;
+        if (screen) screen.style.display = 'none';
+        stopHackSound();
+    }
+
+    function syncHackPhase(phoneVisible) {
+        if (!phoneVisible) {
+            if (hackPhase !== 'idle') stopHackImmediately();
+            return;
+        }
+        if (lastData.isHacked === true) {
+            if (hackPhase === 'idle' || hackPhase === 'ending') startHackIntroduction();
+        } else if (hackPhase === 'starting' || hackPhase === 'active') {
+            startHackEnding();
+        }
     }
 
     function removeOverlay() {
@@ -441,6 +807,7 @@
     }
 
     function detachFromCurrentContainer() {
+        if (hackPhase !== 'idle') stopHackImmediately();
         if (resizeObserver) resizeObserver.disconnect();
         resizeObserver = null;
         if (resizeTimer !== null) window.clearTimeout(resizeTimer);
@@ -685,16 +1052,22 @@
         const fireCanvas = overlay.querySelector('#lb-brokenphone-fire');
         const hackScreen = overlay.querySelector('#lb-brokenphone-hack');
         const hackImage = hackScreen?.querySelector('#lb-brokenphone-hack-image');
-        const hackTextEl = hackScreen?.querySelector('#lb-brokenphone-hack-text');
         const level = Math.max(0, Math.min(3, Number(lastData.damageLevel) || 0));
         const fireLevel = Math.max(0, Math.min(2, Number(lastData.fireLevel) || 0));
         const hacked = lastData.isHacked === true;
-        overlay.style.pointerEvents = touchFaultActive || hacked ? 'auto' : 'none';
+        const phoneVisible = lastData.state !== 'closed';
+        if (hackImage) {
+            const imageUrl = assetUrl(lastData.hackImage, 'hack/ahahah.gif');
+            if (hackImage.src !== imageUrl) hackImage.src = imageUrl;
+        }
+        syncHackPhase(phoneVisible);
+        const hackVisualActive = hackPhase !== 'idle';
+        overlay.style.pointerEvents = touchFaultActive || hackVisualActive ? 'auto' : 'none';
         const seed = Number(lastData.damageSeed) || 1;
         const fireSeed = Number(lastData.fireSeed) || 1;
         const fireImages = lastData.fireImages || { light: [], medium: [] };
         const damageColor = lastData.damageColor === 'white' ? 'white' : 'black';
-        const visible = (level > 0 || fireLevel > 0 || hacked) && lastData.state !== 'closed';
+        const visible = (level > 0 || fireLevel > 0 || hacked || hackVisualActive) && phoneVisible;
         overlay.style.filter = 'none';
         overlay.style.mixBlendMode = 'normal';
         overlay.style.backgroundColor = 'transparent';
@@ -703,7 +1076,6 @@
         renderToken += 1;
         if (!visible) {
             fireInputMask = null;
-            hackWasVisible = false;
             overlay.style.display = 'none';
             canvas.style.display = 'none';
             shadowCanvas.style.display = 'none';
@@ -726,22 +1098,7 @@
             return;
         }
 
-        if (hacked) {
-            if (!hackWasVisible) {
-                playHackSound(true);
-                if (hackTextEl) startTypingEffect(hackTextEl, lastData.hackText);
-            }
-            hackWasVisible = true;
-            if (hackScreen) hackScreen.style.display = 'flex';
-            if (hackImage) {
-                const imageUrl = assetUrl(lastData.hackImage, 'hack/ahahah.gif');
-                if (hackImage.src !== imageUrl) hackImage.src = imageUrl;
-            }
-        } else {
-            hackWasVisible = false;
-            if (hackScreen) hackScreen.style.display = 'none';
-            stopHackSound();
-        }
+        if (hackScreen) hackScreen.style.display = hackVisualActive ? 'flex' : 'none';
 
         const pixelRatio = Math.min(Number(targetWindow && targetWindow.devicePixelRatio) || 1, 2);
         const displayWidth = overlay.parentElement.clientWidth || overlay.clientWidth || 290;
@@ -880,10 +1237,9 @@
         renderFrame = null;
         if (connectTimer !== null) window.clearTimeout(connectTimer);
         connectTimer = null;
-        stopHackSound();
+        stopHackImmediately();
         hackAudio = null;
         hackAudioPath = null;
-        hackWasVisible = false;
         disconnectObservedDocument();
         removeOverlay();
         targetDocument = null;

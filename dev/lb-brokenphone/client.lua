@@ -6,6 +6,7 @@ local state = {
     fireSeed = 0,
     isHacked = false,
     hackExpiresAt = 0,
+    hackOutroActive = false,
     damageColor = 'black',
     phoneOpen = false,
     phoneOnScreen = false,
@@ -14,6 +15,7 @@ local state = {
 
 local transitionToken = 0
 local touchToken = 0
+local hackOutroToken = 0
 local touchFaultActive = false
 local lastNuiStateKey = nil
 
@@ -54,6 +56,12 @@ local function sendNuiUpdate(force)
         Config.Hack.sound,
         Config.Hack.soundVolume,
         Config.Hack.soundCooldown,
+        Config.Hack.startDuration,
+        Config.Hack.endDuration,
+        Config.Hack.activeGlitchIntervalMin,
+        Config.Hack.activeGlitchIntervalMax,
+        Config.Hack.activeGlitchDurationMin,
+        Config.Hack.activeGlitchDurationMax,
         json.encode(Config.Fire.images),
         Config.Fire.blockInput and 1 or 0,
         Config.Fire.inputBlockThreshold
@@ -78,7 +86,13 @@ local function sendNuiUpdate(force)
         hackText = Config.Hack.text,
         hackSound = Config.Hack.sound,
         hackSoundVolume = Config.Hack.soundVolume,
-        hackSoundCooldown = Config.Hack.soundCooldown
+        hackSoundCooldown = Config.Hack.soundCooldown,
+        hackStartDuration = Config.Hack.startDuration,
+        hackEndDuration = Config.Hack.endDuration,
+        hackActiveGlitchIntervalMin = Config.Hack.activeGlitchIntervalMin,
+        hackActiveGlitchIntervalMax = Config.Hack.activeGlitchIntervalMax,
+        hackActiveGlitchDurationMin = Config.Hack.activeGlitchDurationMin,
+        hackActiveGlitchDurationMax = Config.Hack.activeGlitchDurationMax
     })
 end
 
@@ -91,6 +105,29 @@ local function setVisualState(value)
     if state.visualState == value then return end
     state.visualState = value
     sendNuiUpdate()
+end
+
+local updateVisibility
+
+local function cancelHackOutro()
+    if not state.hackOutroActive then return end
+    hackOutroToken = hackOutroToken + 1
+    state.hackOutroActive = false
+end
+
+local function startHackOutro()
+    hackOutroToken = hackOutroToken + 1
+    local token = hackOutroToken
+    state.hackOutroActive = true
+    SetTimeout(Config.Hack.endDuration, function()
+        if token ~= hackOutroToken then return end
+        state.hackOutroActive = false
+        updateVisibility()
+    end)
+end
+
+local function overlayEffectNeeded()
+    return state.damageLevel > 0 or state.fireLevel > 0 or state.isHacked or state.hackOutroActive
 end
 
 local function stopTouchFaults()
@@ -149,17 +186,20 @@ local function refreshTouchFaults()
     end
 end
 
-local function updateVisibility()
+updateVisibility = function()
+    if state.hackOutroActive and not (state.phoneOpen and state.phoneOnScreen) then
+        cancelHackOutro()
+    end
     transitionToken = transitionToken + 1
     local token = transitionToken
     local shouldShow = state.phoneOpen and state.phoneOnScreen
-        and (state.damageLevel > 0 or state.fireLevel > 0 or state.isHacked)
+        and overlayEffectNeeded()
 
     if shouldShow then
         setVisualState('opening')
         SetTimeout(Config.Transition.openDuration, function()
             if token == transitionToken and state.phoneOpen and state.phoneOnScreen
-                and (state.damageLevel > 0 or state.fireLevel > 0 or state.isHacked) then
+                and overlayEffectNeeded() then
                 setVisualState('open')
             end
         end)
@@ -167,7 +207,7 @@ local function updateVisibility()
         setVisualState('closing')
         SetTimeout(Config.Transition.closeDuration, function()
             if token == transitionToken and not (state.phoneOpen and state.phoneOnScreen
-                and (state.damageLevel > 0 or state.fireLevel > 0 or state.isHacked)) then
+                and overlayEffectNeeded()) then
                 setVisualState('closed')
             end
         end)
@@ -186,6 +226,7 @@ local function setActivePhone(phoneNumber)
     state.damageSeed = 0
     state.fireLevel = 0
     state.fireSeed = 0
+    cancelHackOutro()
     state.isHacked = false
     state.hackExpiresAt = 0
     updateVisibility()
@@ -206,12 +247,18 @@ RegisterNetEvent('lb-brokenphone:client:receiveDamage', function(
     phoneNumber, damageLevel, damageSeed, fireLevel, fireSeed, isHacked, hackExpiresAt
 )
     if phoneNumber ~= state.phoneNumber then return end
+    local wasHacked = state.isHacked
     state.damageLevel = math.max(0, math.min(3, tonumber(damageLevel) or 0))
     state.damageSeed = tonumber(damageSeed) or 0
     state.fireLevel = math.max(0, math.min(2, tonumber(fireLevel) or 0))
     state.fireSeed = tonumber(fireSeed) or 0
     state.isHacked = isHacked == true
     state.hackExpiresAt = state.isHacked and math.max(0, tonumber(hackExpiresAt) or 0) or 0
+    if wasHacked and not state.isHacked and state.phoneOpen and state.phoneOnScreen then
+        startHackOutro()
+    elseif state.isHacked then
+        cancelHackOutro()
+    end
     updateVisibility()
 end)
 

@@ -14,6 +14,12 @@ Config.Hack = {
     sound = 'hack/ahahah.ogg', -- Sound played when the blocked display is clicked.
     soundVolume = 0.65,        -- Playback volume from 0.0 (silent) to 1.0 (full volume).
     soundCooldown = 300,       -- Minimum milliseconds between click sounds.
+    startDuration = 5500,      -- Glitch introduction before the hack reaches its active phase.
+    endDuration = 5500,        -- Glitch recovery before normal input and display return.
+    activeGlitchIntervalMin = 2000, -- Minimum delay between active-phase glitch bursts.
+    activeGlitchIntervalMax = 5000, -- Maximum delay between active-phase glitch bursts.
+    activeGlitchDurationMin = 50,   -- Minimum duration of an active glitch burst.
+    activeGlitchDurationMax = 120,  -- Maximum duration of an active glitch burst.
     defaultDuration = 300000,  -- Default hack duration in ms (300000 = 5 minutes, 0 = permanent).
     maxDuration = 86400000,    -- Largest accepted export duration in ms (86400000 = 24 hours).
     expiryRetryDelay = 5000    -- Retry delay when clearing an expired hack could not be persisted.
@@ -249,6 +255,14 @@ assert(type(Config.Hack.sound) == 'string' and Config.Hack.sound ~= '',
     'Config.Hack.sound must be a non-empty html-relative path')
 assertNumberRange('Config.Hack.soundVolume', Config.Hack.soundVolume, 0, 1)
 assertInteger('Config.Hack.soundCooldown', Config.Hack.soundCooldown, 0)
+assertInteger('Config.Hack.startDuration', Config.Hack.startDuration, 1000)
+assertInteger('Config.Hack.endDuration', Config.Hack.endDuration, 1000)
+assertInteger('Config.Hack.activeGlitchIntervalMin', Config.Hack.activeGlitchIntervalMin, 250)
+assertInteger('Config.Hack.activeGlitchIntervalMax', Config.Hack.activeGlitchIntervalMax,
+    Config.Hack.activeGlitchIntervalMin)
+assertInteger('Config.Hack.activeGlitchDurationMin', Config.Hack.activeGlitchDurationMin, 25)
+assertInteger('Config.Hack.activeGlitchDurationMax', Config.Hack.activeGlitchDurationMax,
+    Config.Hack.activeGlitchDurationMin)
 assertInteger('Config.Hack.defaultDuration', Config.Hack.defaultDuration, 0)
 assertInteger('Config.Hack.maxDuration', Config.Hack.maxDuration, 0)
 assertInteger('Config.Hack.expiryRetryDelay', Config.Hack.expiryRetryDelay, 1000)
