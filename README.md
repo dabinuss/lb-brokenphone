@@ -76,6 +76,9 @@ directory contains development files and is not intended for server installation
    add_ace group.admin command.phonedamagearea allow
    add_ace group.admin command.phonedamagecolor allow
    add_ace group.admin command.phonefire allow
+   add_ace group.admin command.phonehack allow
+   add_ace group.admin command.phonehackall allow
+   add_ace group.admin command.phonehackarea allow
    add_ace group.admin command.phonerepair allow
    add_ace group.admin command.phoneunhack allow
    add_ace group.admin command.phonerepairall allow
@@ -127,6 +130,7 @@ Config.Hack = {
     activeGlitchDurationMax = 120,
     defaultDuration = 300000,
     maxDuration = 86400000,
+    maxMessageLength = 512,
     expiryRetryDelay = 5000
 }
 ```
@@ -148,6 +152,9 @@ lasts; `300000` is five minutes and `0` means permanent. `maxDuration` limits
 durations supplied by exports. Timed hacks persist across restarts because their
 expiry time is stored with the phone. If clearing an expired hack cannot be
 persisted, `expiryRetryDelay` controls the delay before the server retries.
+Custom messages are stored with the hack and are limited by `maxMessageLength`.
+When no custom message is supplied, `text` remains the default. Multi-line and
+long messages move the GIF upward progressively, up to a fixed visual limit.
 
 Configure fire variants as paths relative to `html`. The files belong under
 `html/fire/light` and `html/fire/medium`; one variant is selected persistently
@@ -404,6 +411,9 @@ or in the server console without one:
 /phonedamagecolor black
 /phonedamagecolor white
 /phonefire <1-2> [phoneNumber]
+/phonehack <self|phoneNumber> [durationMs|default] [message]
+/phonehackall [durationMs|default] [message]
+/phonehackarea <radius> [durationMs|default] [message]
 /phonerepair [phoneNumber]
 /phoneunhack [phoneNumber]
 /phonerepairall
@@ -423,6 +433,19 @@ creates or changes level 4.
 `Config.Hack.defaultDuration`. It is not an escalation after severe damage.
 Normal damage and escalation can still change the physical crack level while
 the hack is active.
+
+`/phonehack` sends a persistent custom hack message to one equipped phone.
+Use `self` for the executing player's phone. `/phonehackall` uses the optimized
+bulk path, while `/phonehackarea` targets equipped phones around the executing
+player. Omitting the message uses `Config.Hack.text`; `default` selects
+`Config.Hack.defaultDuration`. Examples:
+
+```text
+/phonehack self 60000 YOUR FILES ARE MINE
+/phonehack 4805311440 default CALL ME
+/phonehackarea 75 300000 SYSTEM COMPROMISED
+/phonehackall 45000 SERVER TAKEOVER
+```
 
 `/phonefire 1 [phoneNumber]` applies light fire damage and
 `/phonefire 2 [phoneNumber]` applies medium fire damage. Fire only escalates and coexists
@@ -482,6 +505,8 @@ These exports are server-side APIs. Parameter meanings:
 - `hackDurationMs`: Optional hack duration in milliseconds. Omitting it uses
   `Config.Hack.defaultDuration`; `0` creates a permanent hack. Values above
   `Config.Hack.maxDuration` are rejected.
+- `message`: Optional custom hack text. Empty or omitted values use
+  `Config.Hack.text`; custom values are limited to `Config.Hack.maxMessageLength`.
 
 ```lua
 exports['lb-brokenphone']:ApplyPhoneDamage(source, 2, 'vehicle_crash')
@@ -507,6 +532,13 @@ exports['lb-brokenphone']:HackPhoneByNumber(phoneNumber, 'story_event', 300000)
 exports['lb-brokenphone']:HackBulkPhones(playerSources, 'story_event', 300000)
 exports['lb-brokenphone']:HackAllPhones('server_event', 300000)
 exports['lb-brokenphone']:HackPhonesInArea(coords, 75.0, 'area_hack', 300000)
+
+-- Message-first convenience exports (recommended for custom hack messages).
+exports['lb-brokenphone']:SendHackMessage(source, 'YOUR FILES ARE MINE', 60000, 'story_event')
+exports['lb-brokenphone']:SendHackMessageByNumber(phoneNumber, 'CALL ME', 300000, 'story_event')
+exports['lb-brokenphone']:SendBulkHackMessage(playerSources, 'SYSTEM FAILURE', 45000, 'event')
+exports['lb-brokenphone']:SendHackMessageToAll('SERVER TAKEOVER', 45000, 'event')
+exports['lb-brokenphone']:SendHackMessageInArea(coords, 75.0, 'SIGNAL LOST', 300000, 'area_hack')
 
 local hacked, hackErr, hackState = exports['lb-brokenphone']:IsPhoneHacked(source)
 local numberHacked, numberHackErr, numberHackState =

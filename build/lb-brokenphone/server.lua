@@ -64,6 +64,18 @@ local function normalizeHackDuration(durationMs)
     return durationMs
 end
 
+local function normalizeHackMessage(message)
+    if message == nil then return nil end
+    if type(message) ~= 'string' then return false end
+    message = message:gsub('^%s+', ''):gsub('%s+$', '')
+    if message == '' then return nil end
+    if (utf8 and utf8.len and not utf8.len(message)) or #message > Config.Hack.maxMessageLength
+        or message:find('[%z\1-\8\11\12\14-\31\127]') then
+        return false
+    end
+    return message
+end
+
 local function normalizeDamageColor(value)
     value = type(value) == 'string' and value:lower() or nil
     if value == 'black' or value == 'white' then return value end
@@ -136,6 +148,7 @@ local function ensureDatabase(callback)
                 `fire_seed` INT UNSIGNED NOT NULL DEFAULT 0,
                 `is_hacked` TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,
                 `hack_expires_at` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+                `hack_message` VARCHAR(512) NULL DEFAULT NULL,
                 PRIMARY KEY (`phone_number`)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
         ]=]):format(tableName)
@@ -149,7 +162,8 @@ local function ensureDatabase(callback)
                     { name = 'fire_level', definition = 'TINYINT UNSIGNED NOT NULL DEFAULT 0 AFTER `damage_seed`' },
                     { name = 'fire_seed', definition = 'INT UNSIGNED NOT NULL DEFAULT 0 AFTER `fire_level`' },
                     { name = 'is_hacked', definition = 'TINYINT(1) UNSIGNED NOT NULL DEFAULT 0 AFTER `damage_seed`' },
-                    { name = 'hack_expires_at', definition = 'BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER `is_hacked`' }
+                    { name = 'hack_expires_at', definition = 'BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER `is_hacked`' },
+                    { name = 'hack_message', definition = 'VARCHAR(512) NULL DEFAULT NULL AFTER `hack_expires_at`' }
                 }
                 local function runMigration(index)
                     if index > #migrations then
@@ -245,11 +259,12 @@ local function loadDamageFromStorage(phoneNumber, callback)
                 fireLevel = tonumber(row.fireLevel) or 0,
                 fireSeed = tonumber(row.fireSeed) or 0,
                 isHacked = legacyHack or row.isHacked == true,
-                hackExpiresAt = tonumber(row.hackExpiresAt) or 0
+                hackExpiresAt = tonumber(row.hackExpiresAt) or 0,
+                hackMessage = row.hackMessage
             })
         end
 
-        query(('SELECT damage_level AS damageLevel, damage_seed AS damageSeed, fire_level AS fireLevel, fire_seed AS fireSeed, is_hacked AS isHacked, hack_expires_at AS hackExpiresAt FROM `%s` WHERE phone_number = ? LIMIT 1'):format(tableName), { phoneNumber }, function(rows, err)
+        query(('SELECT damage_level AS damageLevel, damage_seed AS damageSeed, fire_level AS fireLevel, fire_seed AS fireSeed, is_hacked AS isHacked, hack_expires_at AS hackExpiresAt, hack_message AS hackMessage FROM `%s` WHERE phone_number = ? LIMIT 1'):format(tableName), { phoneNumber }, function(rows, err)
             if err then return callback(nil, 'database_query_failed') end
             local row = rows and rows[1]
             if not row then return callback(nil) end
@@ -268,8 +283,8 @@ local function persistDamageState(phoneNumber, state, callback)
         end
 
         local sql = ([=[
-            INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `fire_level`, `fire_seed`, `is_hacked`, `hack_expires_at`)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `fire_level`, `fire_seed`, `is_hacked`, `hack_expires_at`, `hack_message`)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
                 `damage_level` = GREATEST(`damage_level`, VALUES(`damage_level`)),
                 `damage_seed` = CASE
@@ -279,7 +294,7 @@ local function persistDamageState(phoneNumber, state, callback)
         ]=]):format(tableName)
         query(sql, {
             phoneNumber, state.damageLevel, state.damageSeed, state.fireLevel, state.fireSeed,
-            state.isHacked and 1 or 0, state.hackExpiresAt
+            state.isHacked and 1 or 0, state.hackExpiresAt, state.hackMessage or ''
         }, function(_, err)
             if err then return callback(false, 'database_query_failed') end
             callback(true)
@@ -306,17 +321,18 @@ local function persistWholeState(phoneNumber, state, callback)
             params = { phoneNumber }
         else
             sql = ([=[
-                INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `fire_level`, `fire_seed`, `is_hacked`, `hack_expires_at`)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `fire_level`, `fire_seed`, `is_hacked`, `hack_expires_at`, `hack_message`)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE
                     `damage_level` = VALUES(`damage_level`),
                     `damage_seed` = VALUES(`damage_seed`),
                     `fire_level` = VALUES(`fire_level`),
                     `fire_seed` = VALUES(`fire_seed`),
                     `is_hacked` = VALUES(`is_hacked`),
-                    `hack_expires_at` = VALUES(`hack_expires_at`)
+                    `hack_expires_at` = VALUES(`hack_expires_at`),
+                    `hack_message` = VALUES(`hack_message`)
             ]=]):format(tableName)
-            params = { phoneNumber, state.damageLevel, state.damageSeed, state.fireLevel, state.fireSeed, state.isHacked and 1 or 0, state.hackExpiresAt }
+            params = { phoneNumber, state.damageLevel, state.damageSeed, state.fireLevel, state.fireSeed, state.isHacked and 1 or 0, state.hackExpiresAt, state.hackMessage or '' }
         end
         query(sql, params, function(_, err)
             if err then return callback(false, 'database_query_failed') end
@@ -348,13 +364,16 @@ local function copyDamageState(state)
     local fireLevel = math.max(0, math.min(2, tonumber(state and state.fireLevel) or 0))
     local isHacked = state and (state.isHacked == true or tonumber(state.isHacked) == 1) or false
     local hackExpiresAt = math.max(0, tonumber(state and state.hackExpiresAt) or 0)
+    local hackMessage = isHacked and normalizeHackMessage(state and state.hackMessage) or nil
+    if hackMessage == false then hackMessage = nil end
     return {
         damageLevel = damageLevel,
         damageSeed = damageLevel > 0 and tonumber(state and state.damageSeed) or 0,
         fireLevel = fireLevel,
         fireSeed = fireLevel > 0 and tonumber(state and state.fireSeed) or 0,
         isHacked = isHacked,
-        hackExpiresAt = isHacked and hackExpiresAt or 0
+        hackExpiresAt = isHacked and hackExpiresAt or 0,
+        hackMessage = hackMessage
     }
 end
 
@@ -423,7 +442,8 @@ local function sendDamageState(playerSource, phoneNumber, state)
         state.fireLevel,
         state.fireSeed,
         state.isHacked,
-        state.hackExpiresAt
+        state.hackExpiresAt,
+        state.hackMessage
     )
 end
 
@@ -450,6 +470,7 @@ local function getCachedDamageUnlocked(phoneNumber)
     if state.isHacked and state.hackExpiresAt > 0 and state.hackExpiresAt <= os.time() then
         state.isHacked = false
         state.hackExpiresAt = 0
+        state.hackMessage = nil
         local success, expiryError = awaitResult(function(done)
             persistWholeState(phoneNumber, state, done)
         end)
@@ -491,7 +512,8 @@ local function applyByNumberUnlocked(phoneNumber, level, cause)
         fireLevel = current.fireLevel,
         fireSeed = current.fireSeed,
         isHacked = current.isHacked,
-        hackExpiresAt = current.hackExpiresAt
+        hackExpiresAt = current.hackExpiresAt,
+        hackMessage = current.hackMessage
     }
     local success, err = awaitResult(function(done)
         persistDamageState(phoneNumber, state, done)
@@ -574,6 +596,7 @@ clearHackUnlocked = function(phoneNumber, current, cause)
     local cleared = copyDamageState(current)
     cleared.isHacked = false
     cleared.hackExpiresAt = 0
+    cleared.hackMessage = nil
     hackTimerTokens[phoneNumber] = (hackTimerTokens[phoneNumber] or 0) + 1
     local success, err = awaitResult(function(done) persistWholeState(phoneNumber, cleared, done) end)
     if not success then
@@ -603,17 +626,20 @@ scheduleHackExpiry = function(phoneNumber, state, minimumDelay)
     end)
 end
 
-local function hackByNumberUnlocked(phoneNumber, cause, durationMs)
+local function hackByNumberUnlocked(phoneNumber, cause, durationMs, message)
     phoneNumber = normalizePhoneNumber(phoneNumber)
     durationMs = normalizeHackDuration(durationMs)
+    message = normalizeHackMessage(message)
     if not phoneNumber then return false, 'invalid_phone_number' end
     if not durationMs then return false, 'invalid_hack_duration' end
+    if message == false then return false, 'invalid_hack_message' end
 
     local current, loadError = getCachedDamageUnlocked(phoneNumber)
     if loadError then return false, loadError end
     local state = copyDamageState(current)
     state.isHacked = true
     state.hackExpiresAt = durationMs == 0 and 0 or os.time() + math.ceil(durationMs / 1000)
+    state.hackMessage = message
     local success, err = awaitResult(function(done) persistWholeState(phoneNumber, state, done) end)
     if not success then return false, err end
     damageByPhone[phoneNumber] = state
@@ -658,10 +684,10 @@ local function applyDamageDeltaByNumberUnlocked(phoneNumber, escalation, maxResu
     return success, applyError, state, success == true and targetLevel > current.damageLevel
 end
 
-local function applyByNumber(phoneNumber, level, cause, hackDurationMs)
+local function applyByNumber(phoneNumber, level, cause, hackDurationMs, hackMessage)
     if tonumber(level) == 4 then
         return runManaged(function()
-            return hackByNumberUnlocked(phoneNumber, cause or 'hack', hackDurationMs)
+            return hackByNumberUnlocked(phoneNumber, cause or 'hack', hackDurationMs, hackMessage)
         end)
     end
     return runManaged(function()
@@ -798,7 +824,7 @@ local function hydrateDamageCacheUnlocked(phoneNumbers)
             params[#params + 1] = missing[index]
         end
 
-        local sql = ('SELECT phone_number AS phoneNumber, damage_level AS damageLevel, damage_seed AS damageSeed, fire_level AS fireLevel, fire_seed AS fireSeed, is_hacked AS isHacked, hack_expires_at AS hackExpiresAt FROM `%s` WHERE phone_number IN (%s)')
+        local sql = ('SELECT phone_number AS phoneNumber, damage_level AS damageLevel, damage_seed AS damageSeed, fire_level AS fireLevel, fire_seed AS fireSeed, is_hacked AS isHacked, hack_expires_at AS hackExpiresAt, hack_message AS hackMessage FROM `%s` WHERE phone_number IN (%s)')
             :format(tableName, table.concat(placeholders, ', '))
         local rows, queryError = awaitResult(function(done)
             query(sql, params, done)
@@ -853,7 +879,7 @@ local function persistBulkDamageUnlocked(changes)
         local params = {}
         for index = first, last do
             local change = changes[index]
-            values[#values + 1] = '(?, ?, ?, ?, ?, ?, ?)'
+            values[#values + 1] = '(?, ?, ?, ?, ?, ?, ?, ?)'
             params[#params + 1] = change.phoneNumber
             params[#params + 1] = change.state.damageLevel
             params[#params + 1] = change.state.damageSeed
@@ -861,10 +887,11 @@ local function persistBulkDamageUnlocked(changes)
             params[#params + 1] = change.state.fireSeed
             params[#params + 1] = change.state.isHacked and 1 or 0
             params[#params + 1] = change.state.hackExpiresAt
+            params[#params + 1] = change.state.hackMessage or ''
         end
 
         local sql = ([=[
-            INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `fire_level`, `fire_seed`, `is_hacked`, `hack_expires_at`) VALUES %s
+            INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `fire_level`, `fire_seed`, `is_hacked`, `hack_expires_at`, `hack_message`) VALUES %s
             ON DUPLICATE KEY UPDATE
                 `damage_level` = GREATEST(`damage_level`, VALUES(`damage_level`)),
                 `damage_seed` = CASE
@@ -911,7 +938,7 @@ local function persistBulkHackUnlocked(changes)
         local values, params = {}, {}
         for index = first, last do
             local change = changes[index]
-            values[#values + 1] = '(?, ?, ?, ?, ?, ?, ?)'
+            values[#values + 1] = '(?, ?, ?, ?, ?, ?, ?, ?)'
             params[#params + 1] = change.phoneNumber
             params[#params + 1] = change.state.damageLevel
             params[#params + 1] = change.state.damageSeed
@@ -919,12 +946,14 @@ local function persistBulkHackUnlocked(changes)
             params[#params + 1] = change.state.fireSeed
             params[#params + 1] = 1
             params[#params + 1] = change.state.hackExpiresAt
+            params[#params + 1] = change.state.hackMessage or ''
         end
         local sql = ([=[
-            INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `fire_level`, `fire_seed`, `is_hacked`, `hack_expires_at`) VALUES %s
+            INSERT INTO `%s` (`phone_number`, `damage_level`, `damage_seed`, `fire_level`, `fire_seed`, `is_hacked`, `hack_expires_at`, `hack_message`) VALUES %s
             ON DUPLICATE KEY UPDATE
                 `is_hacked` = 1,
-                `hack_expires_at` = VALUES(`hack_expires_at`)
+                `hack_expires_at` = VALUES(`hack_expires_at`),
+                `hack_message` = VALUES(`hack_message`)
         ]=]):format(tableName, table.concat(values, ', '))
         local _, queryError = awaitResult(function(done) query(sql, params, done) end)
         if queryError then return false, 'database_query_failed', applied end
@@ -940,9 +969,11 @@ local function persistBulkHackUnlocked(changes)
     return true, nil, applied
 end
 
-local function processBulkHack(sources, cause, durationMs)
+local function processBulkHack(sources, cause, durationMs, message)
     durationMs = normalizeHackDuration(durationMs)
+    message = normalizeHackMessage(message)
     if not durationMs then return false, 'invalid_hack_duration' end
+    if message == false then return false, 'invalid_hack_message' end
     return runManaged(function()
         local phones, summary, collectError = collectBulkPhones(sources)
         if collectError then return false, collectError, summary end
@@ -955,6 +986,7 @@ local function processBulkHack(sources, cause, durationMs)
             local state = copyDamageState(damageByPhone[phoneNumber])
             state.isHacked = true
             state.hackExpiresAt = expiresAt
+            state.hackMessage = message
             changes[#changes + 1] = { phoneNumber = phoneNumber, state = state }
         end
         local success, persistError, applied = persistBulkHackUnlocked(changes)
@@ -1062,7 +1094,8 @@ local function processBulkDamage(sources, level, cause, escalate)
                         fireLevel = current.fireLevel,
                         fireSeed = current.fireSeed,
                         isHacked = current.isHacked,
-                        hackExpiresAt = current.hackExpiresAt
+                        hackExpiresAt = current.hackExpiresAt,
+                        hackMessage = current.hackMessage
                     }
                 }
             else
@@ -1080,10 +1113,10 @@ local function processBulkDamage(sources, level, cause, escalate)
     end)
 end
 
-local function applyBulkDamage(sources, level, cause, hackDurationMs)
+local function applyBulkDamage(sources, level, cause, hackDurationMs, hackMessage)
     level = normalizeLevel(level)
     if not level then return false, 'invalid_damage_level' end
-    if level == 4 then return hackBulkPhones(sources, cause or 'hack', hackDurationMs) end
+    if level == 4 then return hackBulkPhones(sources, cause or 'hack', hackDurationMs, hackMessage) end
     return processBulkDamage(sources, level, cause, false)
 end
 
@@ -1104,8 +1137,8 @@ local function repairBulkDamage(sources)
     end)
 end
 
-local function applyPhoneDamageToAll(level, cause, hackDurationMs)
-    return applyBulkDamage(GetPlayers(), level, cause or 'all_players', hackDurationMs)
+local function applyPhoneDamageToAll(level, cause, hackDurationMs, hackMessage)
+    return applyBulkDamage(GetPlayers(), level, cause or 'all_players', hackDurationMs, hackMessage)
 end
 
 local function escalatePhoneDamageForAll(cause)
@@ -1116,27 +1149,27 @@ local function repairAllPhones()
     return repairBulkDamage(GetPlayers())
 end
 
-local function hackPhone(playerSource, cause, durationMs)
+local function hackPhone(playerSource, cause, durationMs, message)
     local phoneNumber = resolveEquippedPhone(playerSource)
     if not phoneNumber then return false, 'no_equipped_phone' end
     setActivePhone(playerSource, phoneNumber)
     return runManaged(function()
-        return hackByNumberUnlocked(phoneNumber, cause or 'hack', durationMs)
+        return hackByNumberUnlocked(phoneNumber, cause or 'hack', durationMs, message)
     end)
 end
 
-local function hackPhoneByNumber(phoneNumber, cause, durationMs)
+local function hackPhoneByNumber(phoneNumber, cause, durationMs, message)
     return runManaged(function()
-        return hackByNumberUnlocked(phoneNumber, cause or 'hack', durationMs)
+        return hackByNumberUnlocked(phoneNumber, cause or 'hack', durationMs, message)
     end)
 end
 
-hackBulkPhones = function(sources, cause, durationMs)
-    return processBulkHack(sources, cause or 'hack', durationMs)
+hackBulkPhones = function(sources, cause, durationMs, message)
+    return processBulkHack(sources, cause or 'hack', durationMs, message)
 end
 
-local function hackAllPhones(cause, durationMs)
-    return hackBulkPhones(GetPlayers(), cause or 'hack', durationMs)
+local function hackAllPhones(cause, durationMs, message)
+    return hackBulkPhones(GetPlayers(), cause or 'hack', durationMs, message)
 end
 
 local function normalizeAreaCenter(coords)
@@ -1156,7 +1189,7 @@ local function normalizeAreaRadius(radius)
     return radius
 end
 
-local function applyPhoneDamageInArea(coords, radius, level, cause, hackDurationMs)
+local function applyPhoneDamageInArea(coords, radius, level, cause, hackDurationMs, hackMessage)
     local center = normalizeAreaCenter(coords)
     radius = normalizeAreaRadius(radius)
     local escalate = level == nil
@@ -1195,7 +1228,7 @@ local function applyPhoneDamageInArea(coords, radius, level, cause, hackDuration
     if escalate then
         success, err, summary = escalateBulkDamage(nearbySources, defaultCause)
     else
-        success, err, summary = applyBulkDamage(nearbySources, level, defaultCause, hackDurationMs)
+        success, err, summary = applyBulkDamage(nearbySources, level, defaultCause, hackDurationMs, hackMessage)
     end
     if summary then
         summary.playersChecked = checked
@@ -1210,7 +1243,7 @@ local function escalatePhoneDamageInArea(coords, radius, cause)
     return applyPhoneDamageInArea(coords, radius, nil, cause or 'explosion')
 end
 
-local function hackPhonesInArea(coords, radius, cause, durationMs)
+local function hackPhonesInArea(coords, radius, cause, durationMs, message)
     local center = normalizeAreaCenter(coords)
     radius = normalizeAreaRadius(radius)
     if not center then return false, 'invalid_area_center' end
@@ -1232,7 +1265,7 @@ local function hackPhonesInArea(coords, radius, cause, durationMs)
         checked = checked + 1
         if checked % Config.Persistence.resolveYieldEvery == 0 then Wait(0) end
     end
-    local success, err, summary = hackBulkPhones(nearbySources, cause or 'hack', durationMs)
+    local success, err, summary = hackBulkPhones(nearbySources, cause or 'hack', durationMs, message)
     if summary then
         summary.playersChecked = checked
         summary.playersInArea = #nearbySources
@@ -1261,6 +1294,22 @@ local function hasFirePermission(playerSource)
     if playerSource == 0 then return true end
     if not Config.Commands.restricted then return true end
     return IsPlayerAceAllowed(playerSource, ('command.%s'):format(Config.Commands.fire))
+end
+
+local function hasHackPermission(playerSource)
+    if playerSource == 0 then return true end
+    if not Config.Commands.restricted then return true end
+    return IsPlayerAceAllowed(playerSource, ('command.%s'):format(Config.Commands.hack))
+end
+
+local function hasHackAllPermission(playerSource)
+    if playerSource == 0 then return true end
+    return IsPlayerAceAllowed(playerSource, ('command.%s'):format(Config.Commands.hackAll))
+end
+
+local function hasHackAreaPermission(playerSource)
+    if playerSource == 0 then return false end
+    return IsPlayerAceAllowed(playerSource, ('command.%s'):format(Config.Commands.hackArea))
 end
 
 local function hasRepairPermission(playerSource)
@@ -1398,11 +1447,11 @@ AddEventHandler('playerDropped', function()
     syncPendingBySource[playerSource] = nil
 end)
 
-exports('ApplyPhoneDamage', function(playerSource, level, cause, hackDurationMs)
+exports('ApplyPhoneDamage', function(playerSource, level, cause, hackDurationMs, hackMessage)
     local phoneNumber = resolveEquippedPhone(playerSource)
     if not phoneNumber then return false, 'no_equipped_phone' end
     setActivePhone(playerSource, phoneNumber)
-    return applyByNumber(phoneNumber, level, cause, hackDurationMs)
+    return applyByNumber(phoneNumber, level, cause, hackDurationMs, hackMessage)
 end)
 
 exports('ApplyPhoneDamageByNumber', applyByNumber)
@@ -1493,8 +1542,126 @@ exports('HackPhoneByNumber', hackPhoneByNumber)
 exports('HackBulkPhones', hackBulkPhones)
 exports('HackAllPhones', hackAllPhones)
 exports('HackPhonesInArea', hackPhonesInArea)
+exports('SendHackMessage', function(playerSource, message, durationMs, cause)
+    return hackPhone(playerSource, cause or 'hack_message', durationMs, message)
+end)
+exports('SendHackMessageByNumber', function(phoneNumber, message, durationMs, cause)
+    return hackPhoneByNumber(phoneNumber, cause or 'hack_message', durationMs, message)
+end)
+exports('SendBulkHackMessage', function(playerSources, message, durationMs, cause)
+    return hackBulkPhones(playerSources, cause or 'hack_message', durationMs, message)
+end)
+exports('SendHackMessageToAll', function(message, durationMs, cause)
+    return hackAllPhones(cause or 'hack_message', durationMs, message)
+end)
+exports('SendHackMessageInArea', function(coords, radius, message, durationMs, cause)
+    return hackPhonesInArea(coords, radius, cause or 'hack_message', durationMs, message)
+end)
 
 if Config.Commands.enabled then
+    local function parseHackCommandDuration(value)
+        if value == nil or value == '' or tostring(value):lower() == 'default' then return nil, true end
+        local duration = normalizeHackDuration(value)
+        return duration, duration ~= nil
+    end
+
+    local function parseHackCommandMessage(args, firstIndex)
+        if not args[firstIndex] then return nil, true end
+        local message = normalizeHackMessage(table.concat(args, ' ', firstIndex))
+        return message, message ~= false
+    end
+
+    local function hackCommand(playerSource, args)
+        if not hasHackPermission(playerSource) then
+            return commandReply(playerSource, 'You do not have permission to use this command.', false)
+        end
+
+        local equippedPhone = resolveEquippedPhone(playerSource)
+        local target = args[1]
+        local phoneNumber
+        if target == nil or tostring(target):lower() == 'self' then
+            phoneNumber = equippedPhone
+        else
+            phoneNumber = normalizePhoneNumber(target)
+        end
+        if not phoneNumber then
+            return commandReply(playerSource, ('Usage: /%s <self|phoneNumber> [durationMs|default] [message]'):format(
+                Config.Commands.hack
+            ), false)
+        end
+        if playerSource > 0 and not Config.Commands.restricted and phoneNumber ~= equippedPhone then
+            return commandReply(playerSource, 'You can only hack the phone you currently have equipped.', false)
+        end
+
+        local duration, durationValid = parseHackCommandDuration(args[2])
+        local message, messageValid = parseHackCommandMessage(args, 3)
+        if not durationValid or not messageValid then
+            return commandReply(playerSource, ('Invalid duration or message (maximum %d UTF-8 bytes).'):format(
+                Config.Hack.maxMessageLength
+            ), false)
+        end
+
+        if playerSource > 0 then setActivePhone(playerSource, equippedPhone) end
+        local success, err = hackPhoneByNumber(phoneNumber, 'hack_command', duration, message)
+        commandReply(playerSource, success
+            and ('Hack message activated for %s.'):format(phoneNumber)
+            or ('Hack failed: %s'):format(err or 'unknown_error'), success)
+    end
+
+    local function hackAllCommand(playerSource, args)
+        if not hasHackAllPermission(playerSource) then
+            return commandReply(playerSource, 'You do not have permission to use this command.', false)
+        end
+        local duration, durationValid = parseHackCommandDuration(args[1])
+        local message, messageValid = parseHackCommandMessage(args, 2)
+        if not durationValid or not messageValid then
+            return commandReply(playerSource, ('Usage: /%s [durationMs|default] [message]; maximum message: %d bytes'):format(
+                Config.Commands.hackAll, Config.Hack.maxMessageLength
+            ), false)
+        end
+
+        local success, err, summary = hackAllPhones('hack_command_all', duration, message)
+        commandReply(playerSource, success
+            and ('Sent a hack message to %d unique equipped phone(s); %d player(s) had no phone.'):format(
+                summary.uniquePhones, summary.noPhone
+            )
+            or ('Bulk hack failed after %d phone(s): %s'):format(
+                summary and summary.changed or 0, err or 'unknown_error'
+            ), success)
+    end
+
+    local function hackAreaCommand(playerSource, args)
+        if not hasHackAreaPermission(playerSource) then
+            return commandReply(playerSource, playerSource == 0
+                and 'This command requires an in-game player as its center.'
+                or 'You do not have permission to use this command.', false)
+        end
+        local radius = normalizeAreaRadius(args[1])
+        local duration, durationValid = parseHackCommandDuration(args[2])
+        local message, messageValid = parseHackCommandMessage(args, 3)
+        if not radius or not durationValid or not messageValid then
+            return commandReply(playerSource, ('Usage: /%s <radius> [durationMs|default] [message]'):format(
+                Config.Commands.hackArea
+            ), false)
+        end
+
+        local ped = GetPlayerPed(playerSource)
+        local coordsOk, coords = false, nil
+        if ped and ped > 0 then coordsOk, coords = pcall(GetEntityCoords, ped) end
+        if not coordsOk or not coords then
+            return commandReply(playerSource, 'Your position could not be resolved.', false)
+        end
+
+        local success, err, summary = hackPhonesInArea(coords, radius, 'hack_command_area', duration, message)
+        commandReply(playerSource, success
+            and ('Sent a hack message to %d unique equipped phone(s) within %.1f metres.'):format(
+                summary.uniquePhones, radius
+            )
+            or ('Area hack failed after %d phone(s): %s'):format(
+                summary and summary.changed or 0, err or 'unknown_error'
+            ), success)
+    end
+
     local function fireCommand(playerSource, args)
         if not hasFirePermission(playerSource) then
             return commandReply(playerSource, 'You do not have permission to use this command.', false)
@@ -1715,6 +1882,9 @@ if Config.Commands.enabled then
     RegisterCommand(Config.Commands.setDamageArea, damageAreaCommand, false)
     RegisterCommand(Config.Commands.setDamageColor, damageColorCommand, false)
     RegisterCommand(Config.Commands.fire, fireCommand, false)
+    RegisterCommand(Config.Commands.hack, hackCommand, false)
+    RegisterCommand(Config.Commands.hackAll, hackAllCommand, false)
+    RegisterCommand(Config.Commands.hackArea, hackAreaCommand, false)
     RegisterCommand(Config.Commands.repair, repairCommand, false)
     RegisterCommand(Config.Commands.unhack, unhackCommand, false)
     RegisterCommand(Config.Commands.repairAll, repairAllCommand, false)

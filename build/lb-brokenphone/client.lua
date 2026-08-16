@@ -6,6 +6,7 @@ local state = {
     fireSeed = 0,
     isHacked = false,
     hackExpiresAt = 0,
+    hackMessage = nil,
     hackOutroActive = false,
     damageColor = 'black',
     phoneOpen = false,
@@ -42,6 +43,7 @@ local function lbExport(name, ...)
 end
 
 local function sendNuiUpdate(force)
+    local hackText = state.hackMessage or Config.Hack.text
     local stateKey = table.concat({
         state.visualState,
         state.damageLevel,
@@ -52,7 +54,7 @@ local function sendNuiUpdate(force)
         state.hackExpiresAt,
         state.damageColor,
         Config.Hack.image,
-        Config.Hack.text,
+        json.encode(hackText),
         Config.Hack.sound,
         Config.Hack.soundVolume,
         Config.Hack.soundCooldown,
@@ -83,7 +85,7 @@ local function sendNuiUpdate(force)
         hackExpiresAt = state.hackExpiresAt,
         damageColor = state.damageColor,
         hackImage = Config.Hack.image,
-        hackText = Config.Hack.text,
+        hackText = hackText,
         hackSound = Config.Hack.sound,
         hackSoundVolume = Config.Hack.soundVolume,
         hackSoundCooldown = Config.Hack.soundCooldown,
@@ -113,6 +115,7 @@ local function cancelHackOutro()
     if not state.hackOutroActive then return end
     hackOutroToken = hackOutroToken + 1
     state.hackOutroActive = false
+    if not state.isHacked then state.hackMessage = nil end
 end
 
 local function startHackOutro()
@@ -122,6 +125,7 @@ local function startHackOutro()
     SetTimeout(Config.Hack.endDuration, function()
         if token ~= hackOutroToken then return end
         state.hackOutroActive = false
+        state.hackMessage = nil
         updateVisibility()
     end)
 end
@@ -229,6 +233,7 @@ local function setActivePhone(phoneNumber)
     cancelHackOutro()
     state.isHacked = false
     state.hackExpiresAt = 0
+    state.hackMessage = nil
     updateVisibility()
     TriggerServerEvent('lb-brokenphone:server:syncPhone')
 end
@@ -244,17 +249,20 @@ local function readLbPhoneState()
 end
 
 RegisterNetEvent('lb-brokenphone:client:receiveDamage', function(
-    phoneNumber, damageLevel, damageSeed, fireLevel, fireSeed, isHacked, hackExpiresAt
+    phoneNumber, damageLevel, damageSeed, fireLevel, fireSeed, isHacked, hackExpiresAt, hackMessage
 )
     if phoneNumber ~= state.phoneNumber then return end
     local wasHacked = state.isHacked
+    local previousHackMessage = state.hackMessage
     state.damageLevel = math.max(0, math.min(3, tonumber(damageLevel) or 0))
     state.damageSeed = tonumber(damageSeed) or 0
     state.fireLevel = math.max(0, math.min(2, tonumber(fireLevel) or 0))
     state.fireSeed = tonumber(fireSeed) or 0
     state.isHacked = isHacked == true
     state.hackExpiresAt = state.isHacked and math.max(0, tonumber(hackExpiresAt) or 0) or 0
+    state.hackMessage = state.isHacked and type(hackMessage) == 'string' and hackMessage ~= '' and hackMessage or nil
     if wasHacked and not state.isHacked and state.phoneOpen and state.phoneOnScreen then
+        state.hackMessage = previousHackMessage
         startHackOutro()
     elseif state.isHacked then
         cancelHackOutro()
@@ -306,6 +314,7 @@ exports('GetDamageState', function()
         fireSeed = state.fireSeed,
         isHacked = state.isHacked,
         hackExpiresAt = state.hackExpiresAt,
+        hackMessage = state.isHacked and state.hackMessage or nil,
         damageColor = state.damageColor,
         phoneOpen = state.phoneOpen,
         phoneOnScreen = state.phoneOnScreen

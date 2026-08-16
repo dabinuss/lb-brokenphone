@@ -22,6 +22,7 @@ Config.Hack = {
     activeGlitchDurationMax = 120,  -- Maximum duration of an active glitch burst.
     defaultDuration = 300000,  -- Default hack duration in ms (300000 = 5 minutes, 0 = permanent).
     maxDuration = 86400000,    -- Largest accepted export duration in ms (86400000 = 24 hours).
+    maxMessageLength = 512,    -- Maximum custom hack-message size in UTF-8 bytes.
     expiryRetryDelay = 5000    -- Retry delay when clearing an expired hack could not be persisted.
 }
 
@@ -193,6 +194,9 @@ Config.Commands = {
     setDamageArea = 'phonedamagearea',      -- ACE-only command that damages equipped phones around the executing player.
     setDamageColor = 'phonedamagecolor',    -- Global color command; always requires command.phonedamagecolor ACE.
     fire = 'phonefire',                     -- Command used to apply light (1) or medium (2) display fire damage.
+    hack = 'phonehack',                     -- Hack one equipped phone with an optional duration and message.
+    hackAll = 'phonehackall',               -- ACE-only command that hacks every equipped phone with a message.
+    hackArea = 'phonehackarea',             -- ACE-only command that hacks equipped phones around the player.
     repair = 'phonerepair',                 -- Command used to remove crack and fire damage while preserving a hack.
     unhack = 'phoneunhack',                 -- Command that removes only the hack and preserves physical display damage.
     repairAll = 'phonerepairall',           -- ACE-only command that repairs crack and fire damage on all equipped phones.
@@ -251,6 +255,8 @@ assert(Config.DamageColor == 'black' or Config.DamageColor == 'white',
 assert(type(Config.Hack) == 'table', 'Config.Hack must be a table')
 assert(type(Config.Hack.image) == 'string' and Config.Hack.image ~= '',
     'Config.Hack.image must be a non-empty html-relative path')
+assert(type(Config.Hack.text) == 'string' and Config.Hack.text ~= '',
+    'Config.Hack.text must be a non-empty default message')
 assert(type(Config.Hack.sound) == 'string' and Config.Hack.sound ~= '',
     'Config.Hack.sound must be a non-empty html-relative path')
 assertNumberRange('Config.Hack.soundVolume', Config.Hack.soundVolume, 0, 1)
@@ -265,6 +271,11 @@ assertInteger('Config.Hack.activeGlitchDurationMax', Config.Hack.activeGlitchDur
     Config.Hack.activeGlitchDurationMin)
 assertInteger('Config.Hack.defaultDuration', Config.Hack.defaultDuration, 0)
 assertInteger('Config.Hack.maxDuration', Config.Hack.maxDuration, 0)
+assertInteger('Config.Hack.maxMessageLength', Config.Hack.maxMessageLength, 1)
+assert(Config.Hack.maxMessageLength <= 512,
+    'Config.Hack.maxMessageLength must not exceed the VARCHAR(512) database schema')
+assert(#Config.Hack.text <= Config.Hack.maxMessageLength,
+    'Config.Hack.text must not exceed Config.Hack.maxMessageLength')
 assertInteger('Config.Hack.expiryRetryDelay', Config.Hack.expiryRetryDelay, 1000)
 assert(Config.Hack.defaultDuration <= Config.Hack.maxDuration,
     'Config.Hack.defaultDuration must not exceed Config.Hack.maxDuration')
@@ -362,6 +373,9 @@ validateCommandName('Config.Commands.setDamageAll', Config.Commands.setDamageAll
 validateCommandName('Config.Commands.setDamageArea', Config.Commands.setDamageArea)
 validateCommandName('Config.Commands.setDamageColor', Config.Commands.setDamageColor)
 validateCommandName('Config.Commands.fire', Config.Commands.fire)
+validateCommandName('Config.Commands.hack', Config.Commands.hack)
+validateCommandName('Config.Commands.hackAll', Config.Commands.hackAll)
+validateCommandName('Config.Commands.hackArea', Config.Commands.hackArea)
 validateCommandName('Config.Commands.repair', Config.Commands.repair)
 validateCommandName('Config.Commands.unhack', Config.Commands.unhack)
 validateCommandName('Config.Commands.repairAll', Config.Commands.repairAll)

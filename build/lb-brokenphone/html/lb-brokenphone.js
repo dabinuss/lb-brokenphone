@@ -84,6 +84,7 @@
     let hackAudioPath = null;
     let lastHackSoundAt = -Infinity;
     let hackPhase = 'idle';
+    let activeHackText = null;
     let hackPhaseToken = 0;
     const hackTimers = new Set();
     const hackAnimations = new Set();
@@ -169,6 +170,22 @@
         return hackPhase !== 'idle' && lastData.state !== 'closed';
     }
 
+    function updateHackMessageLayout(screen, text) {
+        if (!screen) return;
+        const message = String(text || '');
+        const visualLines = message.split(/\r?\n/).reduce(function (total, line) {
+            return total + Math.max(1, Math.ceil(Array.from(line).length / 28));
+        }, 0);
+        const upwardShift = Math.min(16, Math.max(0, visualLines - 1) * 2.7);
+        const fontSize = Math.max(0.7, 1.2 - Math.max(0, visualLines - 4) * 0.075);
+        screen.querySelectorAll('#lb-brokenphone-hack-image, .lb-brokenphone-hack-echo-image').forEach(function (image) {
+            image.style.top = `${25 - upwardShift}%`;
+        });
+        screen.querySelectorAll('#lb-brokenphone-hack-text, .lb-brokenphone-hack-echo-text').forEach(function (textElement) {
+            textElement.style.fontSize = `${fontSize}rem`;
+        });
+    }
+
     function startTypingEffect(element, text) {
         const updateText = function (value) {
             element.textContent = value;
@@ -176,6 +193,7 @@
             screen?.querySelectorAll('.lb-brokenphone-hack-echo-text').forEach(function (echoText) {
                 echoText.textContent = value;
             });
+            updateHackMessageLayout(screen, value);
         };
         if (!text) {
             updateText('');
@@ -183,16 +201,25 @@
         }
         typeToken++;
         const currentToken = typeToken;
+        const characters = Array.from(text);
+        const charactersPerStep = Math.max(1, Math.ceil(characters.length / 180));
+        const typingSteps = Math.max(1, Math.ceil(characters.length / charactersPerStep));
+        const characterDelay = Math.max(35, Math.min(80, 6000 / typingSteps));
         let i = 0;
+        let typedText = '';
         
         function typeNext() {
             if (currentToken !== typeToken || !hackActive()) return;
             
-            updateText(text.slice(0, i));
-            i++;
+            const nextIndex = Math.min(characters.length, i + charactersPerStep);
+            while (i < nextIndex) {
+                typedText += characters[i];
+                i += 1;
+            }
+            updateText(typedText);
             
-            if (i <= text.length) {
-                setTimeout(typeNext, 80 + Math.random() * 70);
+            if (i < characters.length) {
+                setTimeout(typeNext, characterDelay + Math.random() * characterDelay * 0.5);
             } else {
                 setTimeout(function() {
                     if (currentToken === typeToken && hackActive()) {
@@ -351,6 +378,9 @@
             hackImage.draggable = false;
             Object.assign(hackImage.style, {
                 display: 'block',
+                position: 'absolute',
+                left: '25%',
+                top: '25%',
                 width: '50%',
                 height: '50%',
                 objectFit: 'contain',
@@ -369,7 +399,10 @@
             Object.assign(hackText.style, {
                 position: 'absolute',
                 bottom: '18%',
-                width: '100%',
+                left: '7%',
+                width: '86%',
+                maxHeight: '34%',
+                overflow: 'hidden',
                 textAlign: 'center',
                 color: '#00ff00',
                 fontFamily: 'monospace',
@@ -377,6 +410,7 @@
                 fontWeight: 'bold',
                 textShadow: '0 0 3px #00ff00',
                 whiteSpace: 'pre-wrap',
+                overflowWrap: 'anywhere',
                 zIndex: '3',
                 pointerEvents: 'none',
                 opacity: '1'
@@ -429,6 +463,9 @@
                 echoImage.draggable = false;
                 Object.assign(echoImage.style, {
                     display: 'block',
+                    position: 'absolute',
+                    left: '25%',
+                    top: '25%',
                     width: '50%',
                     height: '50%',
                     objectFit: 'contain',
@@ -440,13 +477,17 @@
                 Object.assign(echoText.style, {
                     position: 'absolute',
                     bottom: '18%',
-                    width: '100%',
+                    left: '7%',
+                    width: '86%',
+                    maxHeight: '34%',
+                    overflow: 'hidden',
                     textAlign: 'center',
                     color: direction < 0 ? '#ff174f' : '#00dcff',
                     fontFamily: 'monospace',
                     fontSize: '1.2rem',
                     fontWeight: 'bold',
                     whiteSpace: 'pre-wrap',
+                    overflowWrap: 'anywhere',
                     pointerEvents: 'none'
                 });
                 echo.appendChild(echoImage);
@@ -818,6 +859,7 @@
         if (!elements.screen) return;
         hackPhase = 'starting';
         elements.screen.style.display = 'flex';
+        activeHackText = String(lastData.hackText || '');
         playHackSound(true);
         if (elements.text) startTypingEffect(elements.text, lastData.hackText);
 
@@ -846,6 +888,7 @@
         clearHackAnimations();
         resetHackVisuals();
         hackPhase = 'idle';
+        activeHackText = null;
         typeToken += 1;
         const screen = getHackElements().screen;
         if (screen) screen.style.display = 'none';
@@ -889,6 +932,7 @@
     function stopHackImmediately() {
         invalidateHackRuntime();
         hackPhase = 'idle';
+        activeHackText = null;
         typeToken += 1;
         const screen = getHackElements().screen;
         if (screen) screen.style.display = 'none';
@@ -904,6 +948,19 @@
             if (hackPhase === 'idle' || hackPhase === 'ending') startHackIntroduction();
         } else if (hackPhase === 'starting' || hackPhase === 'active') {
             startHackEnding();
+        }
+    }
+
+    function syncActiveHackMessage() {
+        if (hackPhase !== 'starting' && hackPhase !== 'active') return;
+        const nextText = String(lastData.hackText || '');
+        if (nextText === activeHackText) return;
+        activeHackText = nextText;
+        const textElement = getHackElements().text;
+        if (textElement) startTypingEffect(textElement, nextText);
+        if (hackPhase === 'active') {
+            playHackSound(true);
+            runHackGlitchBurst(420, 1.35);
         }
     }
 
@@ -1176,6 +1233,7 @@
             });
         }
         syncHackPhase(phoneVisible);
+        syncActiveHackMessage();
         const hackVisualActive = hackPhase !== 'idle';
         overlay.style.pointerEvents = touchFaultActive || hackVisualActive ? 'auto' : 'none';
         const seed = Number(lastData.damageSeed) || 1;
