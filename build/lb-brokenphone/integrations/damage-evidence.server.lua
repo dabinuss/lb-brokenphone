@@ -2,6 +2,7 @@ local Shared = LBBrokenPhoneDamageShared
 local weaponEvidence = {}
 local pendingWeaponSamples = {}
 local fireSessions = {}
+local vehicleBaselines = {}
 local recentFireWeaponAt = {}
 local recentExplosions = {}
 
@@ -179,7 +180,9 @@ local function findRecentExplosionAt(coords, earliestAt, maximumAge)
     local now = GetGameTimer()
     local radius = Config.AutoDamage.explosionEvidenceRadius
     maximumAge = maximumAge or Config.AutoDamage.evidenceWindow
-    local retention = Config.AutoFireDamage.enabled and 120000 or Config.AutoDamage.evidenceWindow
+    local retention = Config.AutoFireDamage.enabled
+        and Config.AutoFireDamage.requireCauseEvidence and 120000
+        or Config.AutoDamage.evidenceWindow
     local retained = {}
     local best, bestDistanceSquared = nil, math.huge
     for i = 1, #recentExplosions do
@@ -242,7 +245,16 @@ function LBBrokenPhoneDamageEvidence.verifyPhysical(playerSource, cause, clientS
     elseif cause == 'vehicle_crash' then
         local state = readPlayerState(playerSource, true)
         if not state or state.vehicle <= 0 then return nil, 'player_not_in_vehicle' end
-        local bodyHealthLoss = math.max(0.0, 1000.0 - (tonumber(state.vehicleBodyHealth) or 1000.0))
+        local bodyHealth = tonumber(state.vehicleBodyHealth) or 1000.0
+        local baseline = vehicleBaselines[playerSource]
+        if not baseline or baseline.vehicle ~= state.vehicle then
+            vehicleBaselines[playerSource] = { vehicle = state.vehicle, bodyHealth = bodyHealth }
+            return nil, 'missing_vehicle_baseline'
+        end
+
+        local bodyHealthLoss = math.max(0.0, baseline.bodyHealth - bodyHealth)
+        -- Consume every observed delta so old vehicle damage cannot be replayed.
+        baseline.bodyHealth = bodyHealth
         if bodyHealthLoss < Config.AutoDamage.vehicle.minBodyHealthLoss then
             return nil, 'vehicle_damage_too_low'
         end
@@ -257,6 +269,16 @@ function LBBrokenPhoneDamageEvidence.verifyPhysical(playerSource, cause, clientS
     )
     if severity < eventConfig.minSeverity then return nil, 'severity_too_low' end
     return severity
+end
+
+function LBBrokenPhoneDamageEvidence.beginVehicle(playerSource)
+    local state = readPlayerState(playerSource, true)
+    if not state or state.vehicle <= 0 then return false end
+    vehicleBaselines[playerSource] = {
+        vehicle = state.vehicle,
+        bodyHealth = tonumber(state.vehicleBodyHealth) or 1000.0
+    }
+    return true
 end
 
 function LBBrokenPhoneDamageEvidence.beginFire(playerSource)
@@ -316,6 +338,7 @@ function LBBrokenPhoneDamageEvidence.clearPlayer(playerSource)
     weaponEvidence[playerSource] = nil
     pendingWeaponSamples[playerSource] = nil
     fireSessions[playerSource] = nil
+    vehicleBaselines[playerSource] = nil
     recentFireWeaponAt[playerSource] = nil
 end
 
@@ -323,14 +346,17 @@ AddEventHandler('weaponDamageEvent', function(_, event)
     if type(event) ~= 'table' then return end
     local cause = classifyWeapon(event.weaponType)
     if not cause then return end
-    if cause == 'fire' and not Config.AutoFireDamage.enabled then return end
+    if cause == 'fire' and (not Config.AutoFireDamage.enabled
+        or not Config.AutoFireDamage.requireCauseEvidence) then return end
     if cause ~= 'fire' and not Config.AutoDamage.enabled then return end
     local victims = collectVictimSources(event)
     for i = 1, #victims do recordWeaponHit(victims[i], cause) end
 end)
 
 AddEventHandler('explosionEvent', function(_, event)
-    if (not Config.AutoDamage.enabled and not Config.AutoFireDamage.enabled)
+    local trackFireEvidence = Config.AutoFireDamage.enabled
+        and Config.AutoFireDamage.requireCauseEvidence
+    if (not Config.AutoDamage.enabled and not trackFireEvidence)
         or type(event) ~= 'table' then return end
     local x, y, z = tonumber(event.posX), tonumber(event.posY), tonumber(event.posZ)
     if not x or not y or not z then return end

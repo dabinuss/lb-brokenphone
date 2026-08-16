@@ -3,6 +3,7 @@ local Evidence = LBBrokenPhoneDamageEvidence
 local attemptCooldowns = {}
 local lastSuccessfulDamage = {}
 local lastNetworkReport = {}
+local lastVehicleBaseline = {}
 local lastVerificationByCause = {}
 local pendingDamage = {}
 
@@ -87,6 +88,17 @@ local function tryAutoDamage(playerSource, cause, severity)
     return true, nil, state, changed
 end
 
+RegisterNetEvent('lb-brokenphone:server:vehicleEntered', function()
+    local playerSource = source
+    if not Config.AutoDamage.enabled or not Config.AutoDamage.events.vehicle_crash.enabled then return end
+
+    local now = GetGameTimer()
+    if Shared.elapsed(now, lastVehicleBaseline[playerSource])
+        < Config.AutoDamage.vehicle.baselineRateLimit then return end
+    lastVehicleBaseline[playerSource] = now
+    Evidence.beginVehicle(playerSource)
+end)
+
 RegisterNetEvent('lb-brokenphone:server:physicalDamage', function(cause, severity)
     local playerSource = source
     if not Config.AutoDamage.enabled then return end
@@ -118,6 +130,7 @@ AddEventHandler('playerDropped', function()
     attemptCooldowns[playerSource] = nil
     lastSuccessfulDamage[playerSource] = nil
     lastNetworkReport[playerSource] = nil
+    lastVehicleBaseline[playerSource] = nil
     lastVerificationByCause[playerSource] = nil
     pendingDamage[playerSource] = nil
 end)

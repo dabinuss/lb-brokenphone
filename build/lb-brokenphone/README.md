@@ -165,8 +165,9 @@ body damage. Falls, water damage, and medical/downed states are not detected.
 
 The client only reports an event type and normalized severity. Gunshot and melee
 reports must match a recent server-side `weaponDamageEvent`; explosions must
-match a nearby `explosionEvent`; vehicle reports trigger one targeted ped/vehicle
-check. The server owns the whitelist, cooldowns, probability roll, escalation,
+match a nearby `explosionEvent`; vehicle reports are compared with a targeted
+server snapshot captured when that player entered the vehicle. The server owns
+the whitelist, cooldowns, probability roll, escalation,
 maximum result level, phone lookup, and persistence. Set
 `Config.AutoDamage.enabled = false` to disable
 automatic events without affecting commands, exports, repairs, or manual damage.
@@ -199,7 +200,10 @@ Each entry under `Config.AutoDamage.events` has these settings:
 `Config.AutoDamage.vehicle` controls crash sampling and confirmation thresholds.
 Speeds are metres per second; multiply by 3.6 for km/h. `impactWindow` allows the
 collision and body-damage signals to arrive in adjacent samples. Higher minimum
-values reduce sensitivity and false positives.
+values reduce sensitivity and false positives. `baselineRateLimit` limits the
+vehicle-entry snapshot event per player. Only body-health loss since the latest
+server baseline is eligible, and every observed delta is consumed immediately so
+damage already present on a vehicle cannot be reused for later crash reports.
 
 ### Automatic fire damage
 
@@ -219,7 +223,7 @@ Config.AutoFireDamage = {
     networkRateLimit = 2000,
     cooldown = 45000,
     idlePollInterval = 750,
-    requireCauseEvidence = true,
+    requireCauseEvidence = false,
     light = { minHealthLoss = 5, minBurnDuration = 500, chance = 20 },
     medium = { minHealthLoss = 25, minBurnDuration = 3000, chance = 55 }
 }
@@ -232,11 +236,13 @@ cumulative: level 1 renders one light image and level 2 one medium image.
 
 At the beginning of a burn incident the server stores one targeted health
 baseline. The final report is capped by the server-observed health loss and
-elapsed time. With `requireCauseEvidence = true`, the session must additionally
-match a fire-producing `weaponDamageEvent` or a nearby `explosionEvent`. Disable
-that option only when another fire resource creates environmental fires that do
-not produce either server event; health-loss and duration verification remain
-active.
+elapsed time. By default, this permits any fire the client can observe, including
+scripted and environmental fire, as long as the same ped actually loses health
+during the incident. Set `requireCauseEvidence = true` to additionally require a
+fire-producing `weaponDamageEvent` or a nearby `explosionEvent`. This is stricter,
+but can reject valid fires created by other resources. Fire state itself is a
+client-side game signal; the server-authoritative health and timing checks,
+rate limit, cooldown, and probability roll still apply.
 
 ### Damage integration layout
 

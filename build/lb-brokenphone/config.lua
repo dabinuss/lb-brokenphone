@@ -107,6 +107,7 @@ Config.AutoDamage = {
     vehicle = {
         pollInterval = 100,           -- Vehicle crash sampling interval in milliseconds.
         idlePollInterval = 750,       -- Sampling interval while the player is not in a vehicle.
+        baselineRateLimit = 1000,     -- Server rate limit for vehicle-entry baseline snapshots.
         impactWindow = 500,           -- Time allowed for collision and body damage to arrive in adjacent samples.
         minSpeed = 18.0,              -- Minimum pre-impact speed in m/s (18 m/s is about 65 km/h).
         minSpeedLoss = 8.0,           -- Required speed loss between samples in m/s.
@@ -163,7 +164,7 @@ Config.AutoFireDamage = {
     networkRateLimit = 2000,  -- Minimum interval between raw incident reports per player.
     cooldown = 45000,         -- One server-side chance roll per player within this interval.
     idlePollInterval = 750,   -- Slower client polling while the player is not burning.
-    requireCauseEvidence = true, -- Require a server-observed fire weapon or nearby explosion.
+    requireCauseEvidence = false, -- If true, also require a server-observed fire weapon or nearby explosion.
 
     light = {
         minHealthLoss = 5,
@@ -304,6 +305,7 @@ assertNumberRange('Config.AutoDamage.explosionEvidenceRadius', Config.AutoDamage
 assert(type(Config.AutoDamage.vehicle) == 'table', 'Config.AutoDamage.vehicle must be a table')
 assertInteger('Config.AutoDamage.vehicle.pollInterval', Config.AutoDamage.vehicle.pollInterval, 50)
 assertInteger('Config.AutoDamage.vehicle.idlePollInterval', Config.AutoDamage.vehicle.idlePollInterval, 100)
+assertInteger('Config.AutoDamage.vehicle.baselineRateLimit', Config.AutoDamage.vehicle.baselineRateLimit, 250)
 assertInteger('Config.AutoDamage.vehicle.impactWindow', Config.AutoDamage.vehicle.impactWindow, 100)
 assertNumberRange('Config.AutoDamage.vehicle.minSpeed', Config.AutoDamage.vehicle.minSpeed, 0, 200)
 assertNumberRange('Config.AutoDamage.vehicle.minSpeedLoss', Config.AutoDamage.vehicle.minSpeedLoss, 0.1, 200)

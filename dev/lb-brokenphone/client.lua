@@ -102,8 +102,6 @@ local function stopTouchFaults()
         })
         touchFaultActive = false
     end
-    -- Recover from older versions that used LB Phone's global disabled state.
-    lbExport('ToggleDisabled', false)
 end
 
 local function touchFaultsNeeded()
@@ -195,8 +193,6 @@ local function setActivePhone(phoneNumber)
 end
 
 local function readLbPhoneState()
-    -- Recover if a resource reload interrupted a short simulated touch fault.
-    lbExport('ToggleDisabled', false)
     local okNumber, number = lbExport('GetEquippedPhoneNumber')
     local okOpen, isOpen = lbExport('IsOpen')
     local okScreen, onScreen = lbExport('IsPhoneOnScreen')

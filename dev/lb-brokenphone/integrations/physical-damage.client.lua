@@ -124,6 +124,9 @@ CreateThread(function()
             Wait(Config.AutoDamage.vehicle.idlePollInterval)
         else
             local vehicle = GetVehiclePedIsIn(ped, false)
+            if not vehicleState or vehicleState.vehicle ~= vehicle then
+                TriggerServerEvent('lb-brokenphone:server:vehicleEntered')
+            end
             local speed = GetEntitySpeed(vehicle)
             local bodyHealth = GetVehicleBodyHealth(vehicle)
             local vitality = readVitality(ped)
