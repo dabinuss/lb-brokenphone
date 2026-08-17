@@ -5,7 +5,7 @@ lua54 'yes'
 name 'lb-brokenphone'
 description 'Persistent, phone-number-based display damage for LB Phone.'
 author 'Dabinuss'
-version '1.0.0'
+version '1.0.1'
 
 shared_scripts {
     'config.lua',
