@@ -30,3 +30,6 @@ hooks.json
 # OS generated
 .DS_Store
 Thumbs.db
+
+# Release build output (mirrored from dev/, zipped for Keymaster/Tebex upload)
+/build/

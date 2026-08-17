@@ -519,6 +519,23 @@
             });
             hackScreen.appendChild(scanlines);
         }
+        let hackNoise = hackScreen.querySelector('#lb-brokenphone-hack-noise');
+        if (!hackNoise) {
+            hackNoise = targetDocument.createElement('canvas');
+            hackNoise.id = 'lb-brokenphone-hack-noise';
+            Object.assign(hackNoise.style, {
+                display: 'block',
+                position: 'absolute',
+                inset: '0',
+                width: '100%',
+                height: '100%',
+                zIndex: '2',
+                opacity: '0',
+                mixBlendMode: 'screen',
+                pointerEvents: 'none'
+            });
+            hackScreen.appendChild(hackNoise);
+        }
         let movingScanline = hackScreen.querySelector('#lb-brokenphone-moving-scanline');
         if (!movingScanline) {
             movingScanline = targetDocument.createElement('div');
@@ -631,6 +648,7 @@
         return {
             screen: screen,
             image: screen?.querySelector('#lb-brokenphone-hack-image'),
+            noise: screen?.querySelector('#lb-brokenphone-hack-noise'),
             text: screen?.querySelector('#lb-brokenphone-hack-text'),
             echoes: Array.from(screen?.querySelectorAll('.lb-brokenphone-hack-echo') || []),
             fx: screen?.querySelector('#lb-brokenphone-hack-glitch-fx'),
@@ -696,6 +714,7 @@
         });
         if (elements.blackout) elements.blackout.style.opacity = '0';
         if (elements.flash) elements.flash.style.opacity = '0';
+        if (elements.noise) elements.noise.style.opacity = '0';
     }
 
     function invalidateHackRuntime() {
@@ -718,6 +737,79 @@
 
     function randomBetween(minimum, maximum) {
         return minimum + Math.random() * Math.max(0, maximum - minimum);
+    }
+
+    // Fills one short horizontal streak (not the full canvas width) with its
+    // own per-pixel grain, and stamps it at (x0, y0). This is what makes a
+    // streak read as a strip of static instead of either a solid bar or the
+    // whole display being covered.
+    function drawNoiseStreak(context, x0, y0, streakWidth, streakHeight) {
+        const imageData = context.createImageData(streakWidth, streakHeight);
+        const pixels = imageData.data;
+        for (let i = 0; i < pixels.length; i += 4) {
+            if (Math.random() > 0.75) continue;
+            const brightness = Math.round(140 + Math.random() * 115);
+            pixels[i] = Math.round(brightness * 0.15);
+            pixels[i + 1] = brightness;
+            pixels[i + 2] = Math.round(brightness * 0.4);
+            pixels[i + 3] = Math.round(80 + Math.random() * 150);
+        }
+        context.putImageData(imageData, x0, y0);
+    }
+
+    // Redraws a handful of short horizontal noise streaks -- same idea as the
+    // very first version's streaks (finite width, random x/y/length, nothing
+    // covering the rest of the display), except each streak is now itself
+    // built from per-pixel grain (drawNoiseStreak) instead of a flat fill.
+    // The backing store is rendered at a fraction of the on-screen size and
+    // left to the browser's smooth image scaling to blow up, which is what
+    // turns the streak's random pixels into soft grain instead of a blocky
+    // pattern. Streaks get fresh random positions on every redraw (every
+    // 80-150ms, see scheduleHackNoise), which at that cadence reads as the
+    // noise drifting sideways rather than flickering in place. Density/
+    // opacity is weak during the starting/ending phases and stronger while
+    // fully active, matching the rest of the hack screen's intensity arc.
+    function drawHackNoise() {
+        const elements = getHackElements();
+        if (!elements.noise || !elements.screen) return;
+        const displayWidth = elements.screen.clientWidth || 290;
+        const displayHeight = elements.screen.clientHeight || 585;
+        const width = Math.max(80, Math.round(displayWidth / 2));
+        const height = Math.max(160, Math.round(displayHeight / 2));
+        if (elements.noise.width !== width) elements.noise.width = width;
+        if (elements.noise.height !== height) elements.noise.height = height;
+
+        const active = hackPhase === 'active';
+        elements.noise.style.opacity = active ? '0.55' : '0.25';
+
+        const context = elements.noise.getContext('2d');
+        context.clearRect(0, 0, width, height);
+
+        const streakCount = active ? 4 + Math.floor(Math.random() * 5) : 1 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < streakCount; i += 1) {
+            // Mostly hairline-thin (1px at this resolution); a thicker 2-3px
+            // streak only shows up occasionally, more often while active.
+            const heightRoll = Math.random();
+            const streakHeight = active
+                ? (heightRoll < 0.08 ? 3 : heightRoll < 0.3 ? 2 : 1)
+                : (heightRoll < 0.12 ? 2 : 1);
+            const streakWidth = Math.max(4, Math.round(width * (0.12 + Math.random() * 0.35)));
+            const x0 = Math.floor(Math.random() * Math.max(1, width - streakWidth));
+            const y0 = Math.floor(Math.random() * height);
+            drawNoiseStreak(context, x0, y0, streakWidth, streakHeight);
+        }
+    }
+
+    // Keeps the noise canvas refreshing on its own randomized cadence for as
+    // long as the hack screen is up, independent of the glitch-burst
+    // schedule. Uses the same phase token as the rest of the hack runtime, so
+    // it's automatically stopped by clearHackTimers()/invalidateHackRuntime().
+    function scheduleHackNoise(token) {
+        if (token !== hackPhaseToken || !hackActive()) return;
+        drawHackNoise();
+        scheduleHackTask(token, randomBetween(220, 380), function () {
+            scheduleHackNoise(token);
+        });
     }
 
     function runHackGlitchBurst(duration, strength) {
@@ -850,6 +942,7 @@
         resetHackVisuals();
         hackPhase = 'active';
         scheduleActiveHackGlitch(token);
+        scheduleHackNoise(token);
         scheduleRender();
     }
 
@@ -880,6 +973,7 @@
         scheduleHackTask(token, 4550 * scale, function () { runHackBlackout(500 * scale); });
         scheduleHackTask(token, 5050 * scale, function () { runHackGlitchBurst(380 * scale, 1.15); });
         scheduleHackTask(token, duration, function () { enterActiveHack(token); });
+        scheduleHackNoise(token);
     }
 
     function finishHackEnding(token) {
@@ -927,6 +1021,7 @@
             ], { duration: 750 * scale, easing: 'ease-out' });
         });
         scheduleHackTask(token, duration, function () { finishHackEnding(token); });
+        scheduleHackNoise(token);
     }
 
     function stopHackImmediately() {
