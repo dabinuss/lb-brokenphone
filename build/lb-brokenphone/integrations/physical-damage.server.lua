@@ -1,3 +1,7 @@
+-- Turns a *verified* physical-damage report into an actual chance-based
+-- phone damage attempt. damage-evidence.server.lua decides whether a report
+-- is real; this file only decides, given a real report, whether it's this
+-- attempt's turn to succeed (cooldowns, probability roll, escalation cap).
 local Shared = LBBrokenPhoneDamageShared
 local Evidence = LBBrokenPhoneDamageEvidence
 local attemptCooldowns = {}
@@ -12,12 +16,26 @@ local function debugLog(message, ...)
     print(('[lb-brokenphone][physical-damage] ' .. message):format(...))
 end
 
+-- Config.AutoDamage.events[cause].chance is the base percentage. With
+-- Config.AutoDamage.dynamicChance on, it's scaled by how severe this
+-- specific hit was (0.5x at the lowest accepted severity, up to 1.5x at
+-- severity 1.0), so a grazing hit and a near-fatal one don't roll identical
+-- odds.
 local function calculateChance(eventConfig, severity)
     local chance = eventConfig.chance
     if Config.AutoDamage.dynamicChance then chance = chance * (0.5 + severity) end
     return math.max(0.0, math.min(100.0, chance))
 end
 
+-- Core gate: given an already-trusted (playerSource, cause, severity),
+-- decides whether this attempt actually damages the phone. Checks, in
+-- order: feature enabled, valid/known player, valid+enabled cause,
+-- minimum severity, the global per-player success cooldown (one automatic
+-- hit per player per Config.AutoDamage.successCooldown, regardless of
+-- cause), the per-cause attempt cooldown, then rolls the chance. Returns
+-- (true) on success, or (false, reasonString) explaining why not -- useful
+-- for debugLog and for trusted callers that want to know why an attempt was
+-- rejected.
 local function tryAutoDamage(playerSource, cause, severity)
     if not Config.AutoDamage.enabled then return false, 'auto_damage_disabled' end
 
@@ -88,6 +106,10 @@ local function tryAutoDamage(playerSource, cause, severity)
     return true, nil, state, changed
 end
 
+-- Fired by physical-damage.client.lua the moment the player enters a
+-- (new) vehicle. Establishes the body-health baseline damage-evidence needs
+-- before it can measure a later crash as a loss relative to something.
+-- Rate-limited so re-entering the same vehicle repeatedly can't spam it.
 RegisterNetEvent('lb-brokenphone:server:vehicleEntered', function()
     local playerSource = source
     if not Config.AutoDamage.enabled or not Config.AutoDamage.events.vehicle_crash.enabled then return end
@@ -99,6 +121,11 @@ RegisterNetEvent('lb-brokenphone:server:vehicleEntered', function()
     Evidence.beginVehicle(playerSource)
 end)
 
+-- Client-reported "I think I just took damage from X". Never trusted
+-- directly: rate-limited per player, gated by a per-cause cooldown so the
+-- same cause can't be re-verified back-to-back, then handed to
+-- Evidence.verifyPhysical for independent confirmation before
+-- tryAutoDamage() ever sees it.
 RegisterNetEvent('lb-brokenphone:server:physicalDamage', function(cause, severity)
     local playerSource = source
     if not Config.AutoDamage.enabled then return end

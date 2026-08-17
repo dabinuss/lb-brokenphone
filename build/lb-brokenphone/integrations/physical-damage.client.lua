@@ -1,9 +1,23 @@
+-- Purely a passive observer, same contract as fire-damage.client.lua: it
+-- watches for combat hits and vehicle crashes and reports them, but never
+-- decides anything. physical-damage.server.lua re-verifies every report
+-- against damage-evidence.server.lua's own observations before applying any
+-- phone damage.
 if not Config.AutoDamage.enabled then return end
 
 local Shared = LBBrokenPhoneDamageShared
 local lastReportedAt = {}
+-- Cache of the player's own vitality, refreshed every vehicle-poll tick, so
+-- the CEventNetworkEntityDamage handler below has a recent "before" value
+-- without needing its own separate polling loop.
 local lastCombatVitality = nil
 
+-- joaat() hashes can come back as values Lua reads as negative (32-bit
+-- wraparound); normalise into a plain 0..4294967295 range so weapon/group
+-- hashes always land on the same table key regardless of sign
+-- interpretation. Duplicated from damage-evidence.server.lua -- the client
+-- cannot require a *.server.lua file, so there is no shared source of truth
+-- for this or the weapon lists below; keep both in sync by hand.
 local function canonicalHash(value)
     value = tonumber(value)
     if not value then return nil end
@@ -18,6 +32,9 @@ local function hashSet(names)
     return values
 end
 
+-- Individually-named weapons that always count as explosive regardless of
+-- their weapon group (see damage-evidence.server.lua for the full weapon
+-- classification and its DLC-maintenance caveat).
 local explosiveWeapons = hashSet({
     'WEAPON_GRENADE',
     'WEAPON_GRENADELAUNCHER',
@@ -38,6 +55,9 @@ local explosiveWeapons = hashSet({
     'WEAPON_EMPLAUNCHER'
 })
 
+-- Everything else is classified by GetWeapontypeGroup() instead of by name,
+-- since the client only needs a rough melee/gunshot split here -- the
+-- server does the authoritative, per-weapon classification independently.
 local meleeGroups = hashSet({ 'GROUP_UNARMED', 'GROUP_MELEE' })
 local firearmGroups = hashSet({
     'GROUP_PISTOL',
@@ -53,6 +73,11 @@ local function readVitality(ped)
     return math.max(0, GetEntityHealth(ped) - 100) + math.max(0, GetPedArmour(ped))
 end
 
+-- Sends a raw damage report to the server. Debounced per cause
+-- (Config.AutoDamage.clientDebounce) purely to avoid flooding the network
+-- with reports the server would just rate-limit anyway -- this is a
+-- courtesy limit, not a security one; physical-damage.server.lua enforces
+-- its own limits independently.
 local function reportPhysicalDamage(cause, severity)
     local eventConfig = Config.AutoDamage.events[cause]
     if not eventConfig or not eventConfig.enabled then return end
@@ -68,6 +93,12 @@ local function reportPhysicalDamage(cause, severity)
     )
 end
 
+-- CEventNetworkEntityDamage's args carry the weapon hash at different
+-- indices depending on the damage type; index 7 covers most cases, 5 is the
+-- fallback for the rest. If neither is a valid weapon, falls back to
+-- whatever weapon the attacking ped currently has selected (best-effort for
+-- damage types that don't report a weapon at all, e.g. some melee/vehicle
+-- impacts).
 local function resolveDamageWeapon(args)
     for _, index in ipairs({ 7, 5 }) do
         local candidate = tonumber(args[index])
@@ -92,6 +123,13 @@ local function classifyWeapon(weapon)
     return nil
 end
 
+-- Fires on every damage event the game engine reports for any entity;
+-- filtered down to "did this happen to my own ped". Vitality is sampled
+-- once right away (SetTimeout(0), i.e. next tick, so the engine has applied
+-- the damage) and again after Config.AutoDamage.snapshotInterval + 50ms --
+-- matching the delay damage-evidence.server.lua uses for its own before/
+-- after sample -- so the severity reported here lines up with the window
+-- the server will check evidence against.
 AddEventHandler('gameEventTriggered', function(name, args)
     if name ~= 'CEventNetworkEntityDamage' then return end
 
@@ -113,6 +151,16 @@ AddEventHandler('gameEventTriggered', function(name, args)
     end)
 end)
 
+-- Vehicle crash detection loop. While in a vehicle, polls speed and body
+-- health each tick to spot a sudden speed loss combined with an actual
+-- collision (HasEntityCollidedWithAnything) -- that opens a short "impact
+-- window" (Config.AutoDamage.vehicle.impactWindow). Only once body health
+-- has dropped enough within that window is it treated as a real crash and
+-- reported; this two-step check (collision + speed loss, then confirmed
+-- body damage) avoids reporting e.g. hard braking or scraping a wall
+-- without real damage as a crash. Severity is the worst of speed loss, body
+-- damage, and the player's own vitality loss, each normalised against its
+-- own configured reference value.
 CreateThread(function()
     local vehicleState = nil
     while true do

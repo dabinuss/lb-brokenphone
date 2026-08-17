@@ -1,3 +1,8 @@
+-- Turns a *verified* fire-injury report into an actual chance-based phone
+-- fire-damage attempt. Structurally the fire counterpart to
+-- physical-damage.server.lua: damage-evidence.server.lua decides whether a
+-- report is real, this file decides whether it results in fire damage
+-- (classification into light/medium, cooldown, probability roll).
 local Shared = LBBrokenPhoneDamageShared
 local Evidence = LBBrokenPhoneDamageEvidence
 local lastFireAttempt = {}
@@ -10,6 +15,10 @@ local function debugLog(message, ...)
     print(('[lb-brokenphone][fire-damage] ' .. message):format(...))
 end
 
+-- Fired by fire-damage.client.lua the instant the player catches fire.
+-- Opens the evidence session (see Evidence.beginFire) that later
+-- Evidence.verifyFire calls diff against; rate-limited so flickering
+-- on-fire states can't reopen the session repeatedly.
 RegisterNetEvent('lb-brokenphone:server:fireStarted', function()
     local playerSource = source
     if not Config.AutoFireDamage.enabled then return end
@@ -19,6 +28,10 @@ RegisterNetEvent('lb-brokenphone:server:fireStarted', function()
     if Evidence.beginFire(playerSource) then lastSessionStart[playerSource] = now end
 end)
 
+-- Light and medium are mutually exclusive outcomes, not additive levels:
+-- either threshold set (health lost OR time spent burning) being met is
+-- enough, and medium is checked first so a burn severe enough for both
+-- always classifies as medium. Returns (nil) if neither threshold is met.
 local function classifyFireDamage(healthLoss, burnDuration)
     local medium = Config.AutoFireDamage.medium
     if healthLoss >= medium.minHealthLoss or burnDuration >= medium.minBurnDuration then
@@ -32,6 +45,11 @@ local function classifyFireDamage(healthLoss, burnDuration)
     return nil
 end
 
+-- Core gate, mirroring physical-damage.server.lua's tryAutoDamage: given an
+-- already-trusted (playerSource, healthLoss, burnDuration), classifies the
+-- burn severity, checks the cooldown, rolls the level's chance, and applies
+-- fire damage through LBBrokenPhoneCore if it hits. Returns (true) on
+-- success, or (false, reasonString) otherwise.
 local function tryAutoFireDamage(playerSource, healthLoss, burnDuration)
     if not Config.AutoFireDamage.enabled then return false, 'auto_fire_damage_disabled' end
 
@@ -87,6 +105,11 @@ local function tryAutoFireDamage(playerSource, healthLoss, burnDuration)
     return true, nil, state, changed
 end
 
+-- Client-reported "I just finished burning, here's what it cost me". Never
+-- trusted directly: rate-limited per player (cancelling the open evidence
+-- session if the report itself is being rate-limited, so it can't be reused
+-- for a later unrelated fire), then handed to Evidence.verifyFire for
+-- independent confirmation before tryAutoFireDamage() ever sees it.
 RegisterNetEvent('lb-brokenphone:server:fireDamage', function(healthLoss, burnDuration)
     local playerSource = source
     if not Config.AutoFireDamage.enabled then return end
